@@ -255,25 +255,121 @@ struct Cpu {
 // A: Arithmetic, F: Flags
 const A: usize = 0;
 const F: usize = 1;
+const AF: usize = A;
 const B: usize = 2;
 const C: usize = 3;
+const BC: usize = B;
 const D: usize = 4;
 const E: usize = 5;
+const DE: usize = E;
 const H: usize = 6;
 const L: usize = 7;
+const HL: usize = H;
 
 impl Cpu {
     fn read16bit(&self, i: usize) -> u16 {
-        assert!(i < 7);
-        ((self.reg[i] as u16) << 8) | self.reg[i + 1] as u16
+        42
+//        assert!(i < 7);
+//        ((self.reg[i] as u16) << 8) | self.reg[i + 1] as u16
     }
 
-    //    fn write16bit(&mut self, i: usize, val: u16) {
+    fn write16bit(&mut self, i: usize, val: u16) {
+        unimplemented!();
 //        assert!(i < 7);
 //        self.reg[i] = (val >> 8) as u8;
 //        self.reg[i + 1] = (val & 0xFF) as u8;
-//    }
-//
+    }
+
+    fn execute_instruction(&mut self, instr: Instruction) {
+        match instr {
+            // GMB 8bit-Load commands
+            // ld   r,r         xx         4 ---- r=r
+            LoadReg{to, from} => {
+                assert!(to < self.reg.len());
+                assert!(from < self.reg.len());
+                self.reg[to] = self.reg[from];
+            },
+            // ld   r,n         xx nn      8 ---- r=n
+            LoadRegWithConstant{to, n} => {
+                assert!(to < self.reg.len());
+                self.reg[to] = n;
+
+            },
+            // ld   r,(HL)      xx         8 ---- r=(HL)
+            LoadRegWithMemoryHL{to} => {
+                assert!(to < self.reg.len());
+                self.reg[to] = self.mem[self.read16bit(HL)];
+            },
+            // ld   (HL),r      7x         8 ---- (HL)=r
+            LoadMemoryHLwithRegister{from} => {
+                assert!(to < self.reg.len());
+                self.mem[self.read16bit(HL)] = self.reg[to];
+            },
+            // ld   (HL),n      36 nn     12 ----
+            LoadMemoryHLwithConstant {n} => {
+                self.mem[self.read16bit(HL)] = n;
+            },
+            // ld   A,(BC)      0A         8 ----
+            LoadAwithValBC {} => {
+
+            },
+            // ld   A,(DE)      1A         8 ----
+            LoadAwithValDE {} => {
+
+            },
+            // ld   A,(nn)      FA        16 ----
+            LoadAwithMemory { nn: usize} => {
+
+            },
+            // ld   (BC),A      02         8 ----
+            LoadMemoryBCwithA {} => {
+
+            },
+            // ld   (DE),A      12         8 ----
+            LoadMemoryDEwithA {} => {
+
+            },
+            // ld   (nn),A      EA        16 ----
+            LoadMemoryNNwithA {nn: usize} => {
+
+            },
+            // ld   A,(FF00+n)  F0 nn     12 ---- read from io-port n (memory FF00+n)
+            LoadAwithFF00plusN {nn: usize} => {
+
+            },
+            // ld   (FF00+n),A  E0 nn     12 ---- write to io-port n (memory FF00+n)
+            LoadMemoryFF00plusNwithA {n: usize} => {
+
+            },
+            // ld   A,(FF00+C)  F2         8 ---- read from io-port C (memory FF00+C)
+            LoadAwithFF00plusC {} => {
+
+            },
+            // ld   (FF00+C),A  E2         8 ---- write to io-port C (memory FF00+C)
+            LoadMemoryFF00plusCwithA {} => {
+
+            },
+            // ldi  (HL),A      22         8 ---- (HL)=A, HL=HL+1
+            LoadMemoryHLwithAandIncr {} => {
+
+            },
+            // ldi  A,(HL)      2A         8 ---- A=(HL), HL=HL+1
+            LoadAwithValHLandIncr {} => {
+
+            },
+
+            // ldd  (HL),A      32         8 ---- (HL)=A, HL=HL-1
+            LoadMemoryHLwithAandDecr {} => {
+
+            },
+            // ldd  A,(HL)      3A         8 ---- A=(HL), HL=HL-1
+            LoadAwithValHLandDecr {} => {
+
+            },
+
+        }
+    }
+
     // (instruction, num cycles, pc increments)
     fn fetch_instruction(&self) -> (Instruction, usize, usize) {
         let mask_xo = |byte: u8| (byte & 0b11110000) as usize;
@@ -546,7 +642,6 @@ impl Cpu {
                     //GMB Singlebit Operation Commands
                     //bit  n,r       CB xx        8 z01- test bit n
                     //bit  n,(HL)    CB xx       12 z01- test bit n
-                    // TODO: The clock cycles for bit  n,(HL) may be incorrect! Inconsistencies in our data..
                     0x40..0x46 => (TestBitRegister { bit: 0, r: reg_offset(op) }, 8, 2),
                     0x46 => (TestBitMemoryHL { bit: 0 }, 16, 2),
                     0x47 => (TestBitRegister { bit: 0, r: A }, 8, 2),
@@ -657,11 +752,9 @@ impl Cpu {
             //nop            00           4 ---- no operation
             0x00 => (NOP {}, 4, 1),
             //halt           76         N*4 ---- halt until interrupt occurs (low power)
-            // TODO: N*4 = ?
             0x76 => (HALT {}, 4, 1),
             //stop           10 00        ? ---- low power standby mode (VERY low power)
-            // TODO: Num cycles unknown?
-            0x10 => (STOP {}, 1, 1),
+            0x10 => (STOP {}, 4, 2),
             //di             F3           4 ---- disable interrupts, IME=0
             0xF3 => (DI {}, 4, 1),
             //ei             FB           4 ---- enable interrupts, IME=1
