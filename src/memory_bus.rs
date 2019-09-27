@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{MemoryAddress, OAM, Rom, Ram, Cpu, DIV, DMA};
-use crate::util::{LittleEndian};
+use crate::cpu::{MemoryAddress, OAM, Rom, Ram, DIV, DMA};
+use crate::util::{little_endian, ith_bit};
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
 // 4000-7FFF 16KB ROM Bank 01..NN (in cartridge, switchable bank number)
@@ -81,7 +81,7 @@ impl MemoryBus {
                 // Ram Enable
                 // Do RAM bank Enable
                 if let Rom::Bank2 = self.rom_bank {
-                    if Cpu::ith_bit(self.read(address), 4) {
+                    if ith_bit(self.read(address), 4) {
                         return;
                     }
                 }
@@ -133,7 +133,7 @@ impl MemoryBus {
             0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
             DIV => self.raw_memory[DIV as usize] = 0,
             DMA => {
-                let source = LittleEndian::u16(0, data) as usize;
+                let source = little_endian::u16(0, data) as usize;
                 self.raw_memory.copy_within(source..source + 0xA0, OAM as usize);
             }
             _ => self.raw_memory[address as usize] = data,
@@ -141,7 +141,7 @@ impl MemoryBus {
     }
 
     pub fn read_word(&self, address: MemoryAddress) -> u16 {
-        LittleEndian::u16(self.read(address), self.read(address + 1))
+        little_endian::u16(self.read(address), self.read(address + 1))
     }
 
     pub fn read(&self, address: MemoryAddress) -> u8 {

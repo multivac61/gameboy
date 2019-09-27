@@ -1,4 +1,4 @@
-use crate::util::{LittleEndian};
+use crate::util::{little_endian, ith_bit};
 use crate::instructions::Instruction::*;
 use crate::memory_bus::MemoryBus;
 use crate::instructions::Instruction;
@@ -159,9 +159,9 @@ impl std::convert::From<u8> for Rom {
 #[derive(Clone, Copy)]
 pub enum Ram {
     Bank0,
-    Bank1,
-    Bank2,
-    Bank3,
+//    Bank1,
+//    Bank2,
+//    Bank3,
 }
 
 pub struct Cpu {
@@ -210,7 +210,7 @@ impl Cpu {
             self.mem.write(DIV, val);
         }
 
-        let is_clock_enabled = Cpu::ith_bit(self.mem.read(TMC), 2);
+        let is_clock_enabled = ith_bit(self.mem.read(TMC), 2);
         if is_clock_enabled {
             self.timer_counter -= i64::from(cycles);
 
@@ -237,7 +237,7 @@ impl Cpu {
     fn update_graphics(&mut self, cycles: u8) {
         let status = self.mem.read(STAT);
         let control = self.mem.read(LCDC);
-        let is_enabled = Cpu::ith_bit(control, LcdControl::Enable as u8);
+        let is_enabled = ith_bit(control, LcdControl::Enable as u8);
 
         let set_mode_bits = |status, mode| (status & 0b1111_1100) | mode as u8;
 
@@ -254,13 +254,13 @@ impl Cpu {
         let mode = Lcd::from(status & 0b0000_0011);
 
         let (new_mode, should_interrupt) = if line >= 144 {
-            (Lcd::VBlank, Cpu::ith_bit(status, 4))
+            (Lcd::VBlank, ith_bit(status, 4))
         } else if self.scan_counter >= 456 - 80 {
-            (Lcd::SearchingRam, Cpu::ith_bit(status, 5))
+            (Lcd::SearchingRam, ith_bit(status, 5))
         } else if self.scan_counter >= 456 - 80 - 172 {
             (Lcd::TransferringDataToDriver, false)
         } else {
-            (Lcd::HBlank, Cpu::ith_bit(status, 3))
+            (Lcd::HBlank, ith_bit(status, 3))
         };
 
         if new_mode != mode && should_interrupt {
@@ -269,7 +269,7 @@ impl Cpu {
 
         // check the conincidence flag
         let new_status = if line == self.mem.read(LYC) {
-            if Cpu::ith_bit(status, 6) {
+            if ith_bit(status, 6) {
                 self.request_interrupt(Interrupt::LCD);
             }
             status | (1 << 2)
@@ -287,11 +287,11 @@ impl Cpu {
             self.scan_counter = 456;
 
             if line < 144 {
-                if Cpu::ith_bit(control, LcdControl::BackgroundEnable as u8) {
+                if ith_bit(control, LcdControl::BackgroundEnable as u8) {
                     self.render_tiles();
                 }
 
-                if Cpu::ith_bit(control, LcdControl::ObjectEnable as u8) {
+                if ith_bit(control, LcdControl::ObjectEnable as u8) {
                     self.render_sprites();
                 }
             } else if line == 144 {
@@ -312,7 +312,7 @@ impl Cpu {
         let control = self.mem.read(LCDC);
 
         // which tile data are we using?
-        let tile_data_address: u16 = if Cpu::ith_bit(
+        let tile_data_address: u16 = if ith_bit(
             control,
             LcdControl::BackgroundAndWindodwTileDataSelect as u8,
         ) {
@@ -321,7 +321,7 @@ impl Cpu {
             0x8800
         };
 
-        let is_window_enabled = Cpu::ith_bit(control, LcdControl::WindowDisplayEnable as u8);
+        let is_window_enabled = ith_bit(control, LcdControl::WindowDisplayEnable as u8);
         let is_window_visible = is_window_enabled && window_y <= line;
 
         let map_select = if is_window_visible {
@@ -329,7 +329,7 @@ impl Cpu {
         } else {
             LcdControl::BackgroundTileMapSelect
         };
-        let bg_address: u16 = if Cpu::ith_bit(control, map_select as u8) {
+        let bg_address: u16 = if ith_bit(control, map_select as u8) {
             0x9C00
         } else {
             0x9800
@@ -371,11 +371,11 @@ impl Cpu {
             // each vertical line takes up two bytes of memory
             let object_y = 2 * (y_pos % 8);
             let (data2, data1) =
-                LittleEndian::u8(self.mem.read_word(tile_location + u16::from(object_y)));
+                little_endian::u8(self.mem.read_word(tile_location + u16::from(object_y)));
 
             let colour_bit_num = 1 << (x_pos & 0b0111);
-            let color_num = ((Cpu::ith_bit(data2, colour_bit_num) as u8) << 1)
-                | Cpu::ith_bit(data1, colour_bit_num) as u8;
+            let color_num = ((ith_bit(data2, colour_bit_num) as u8) << 1)
+                | ith_bit(data1, colour_bit_num) as u8;
 
             let c = self.get_color(color_num, BGP);
             self.display[line as usize][pixel as usize] = c;
@@ -397,14 +397,14 @@ impl Cpu {
     fn render_sprites(&mut self) {
         let control = self.mem.read(LCDC);
 
-        let y_size = if Cpu::ith_bit(control, LcdControl::ObjectSize as u8) { 16 } else { 8 };
+        let y_size = if ith_bit(control, LcdControl::ObjectSize as u8) { 16 } else { 8 };
 
         // sprite occupies 4 bytes in the sprite attributes table
         const NUM_SPRITES: u16 = 40;
         for i in (0..4 * NUM_SPRITES as u16).step_by(4) {
             let (x_pos, y_pos) = (self.mem.read(OAM + i + 1) - 8, self.mem.read(OAM + i) - 16);
             let (tile_location, attribute) = (self.mem.read(OAM + i + 2), self.mem.read(OAM + i + 3));
-            let (x_flip, y_flip) = (Cpu::ith_bit(attribute, 5), Cpu::ith_bit(attribute, 6));
+            let (x_flip, y_flip) = (ith_bit(attribute, 5), ith_bit(attribute, 6));
 
             let scan_line = self.mem.read(LY);
 
@@ -413,15 +413,15 @@ impl Cpu {
                 let line = 2 * if y_flip { -(scan_line as i16 - y_pos as i16 - y_size as i16) } else { scan_line as i16 - y_pos as i16 };
 
                 let address = ((0x8000 + (tile_location as i32 * 16)) + line as i32) as u16;
-                let (data2, data1) = LittleEndian::u8(self.mem.read_word(address));
+                let (data2, data1) = little_endian::u8(self.mem.read_word(address));
 
                 for pixel in 0..=7 {
                     let pixel_bit = if x_flip { pixel } else { 7 - pixel };
 
-                    let color_num = ((Cpu::ith_bit(data2, pixel_bit) as u8) << 1)
-                        | Cpu::ith_bit(data1, pixel_bit) as u8;
+                    let color_num = ((ith_bit(data2, pixel_bit) as u8) << 1)
+                        | ith_bit(data1, pixel_bit) as u8;
 
-                    let color_address = if Cpu::ith_bit(attribute, 4) { OBP1 } else { OBP0 };
+                    let color_address = if ith_bit(attribute, 4) { OBP1 } else { OBP0 };
 
                     let c = self.get_color(color_num, color_address);
 
@@ -446,7 +446,7 @@ impl Cpu {
         let is_requested_and_enabled = is_requested & is_enabled;
 
         for i in 0..5 {
-            if Cpu::ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
+            if ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
                 self.are_interrupts_enabled = false;
                 let not_requested_anymore = is_requested & !(1 << i);
                 self.mem
@@ -496,12 +496,12 @@ impl Cpu {
     }
 
     fn write_word(&mut self, r: Register16bit, val: u16) {
-        self.reg[r as usize] = LittleEndian::lsb(val);
-        self.reg[r as usize + 1] = LittleEndian::msb(val);
+        self.reg[r as usize] = little_endian::lsb(val);
+        self.reg[r as usize + 1] = little_endian::msb(val);
     }
 
     fn read_word(&self, r: Register16bit) -> u16 {
-        LittleEndian::u16(self.reg[r as usize], self.reg[r as usize + 1])
+        little_endian::u16(self.reg[r as usize], self.reg[r as usize + 1])
     }
 
     fn write(&mut self, r: Register, val: u8) {
@@ -524,13 +524,8 @@ impl Cpu {
     }
 
 
-    pub fn ith_bit(n: u8, i: u8) -> bool {
-        assert!(i <= 7);
-        n & (1 << i) == (1 << i)
-    }
-
     fn get_flag(&self, flag: ConditionalFlag) -> bool {
-        Cpu::ith_bit(self.reg[Register::F as usize], flag as u8)
+        ith_bit(self.reg[Register::F as usize], flag as u8)
     }
 
     fn set_flags(&mut self, flags: Flags) {
@@ -593,11 +588,11 @@ impl Cpu {
     }
 
     fn execute_instruction(&mut self, instr: Instruction) -> u8 {
-        let rotate_left = |x| ((x << 1) | Cpu::ith_bit(x, 7) as u8, Cpu::ith_bit(x, 7));
-        let rotate_left_carry = |x| ((x << 1) | self.get_flag(ConditionalFlag::Carry) as u8, Cpu::ith_bit(x, 7));
+        let rotate_left = |x| ((x << 1) | ith_bit(x, 7) as u8, ith_bit(x, 7));
+        let rotate_left_carry = |x| ((x << 1) | self.get_flag(ConditionalFlag::Carry) as u8, ith_bit(x, 7));
 
-        let rotate_right = |x| ((x >> 1) | ((Cpu::ith_bit(x, 0) as u8) << 7), Cpu::ith_bit(x, 0), );
-        let rotate_right_carry = |x| ((x >> 1) | ((self.get_flag(ConditionalFlag::Carry) as u8) << 7), Cpu::ith_bit(x, 0), );
+        let rotate_right = |x| ((x >> 1) | ((ith_bit(x, 0) as u8) << 7), ith_bit(x, 0), );
+        let rotate_right_carry = |x| ((x >> 1) | ((self.get_flag(ConditionalFlag::Carry) as u8) << 7), ith_bit(x, 0), );
 
         match instr {
             // GMB 8bit-Load commands
@@ -1328,7 +1323,7 @@ impl Cpu {
             }
             //sla  r         CB 2x        8 z00c shift left arithmetic (b0=0)
             ShiftLeftRegister { r } => {
-                let carry = Cpu::ith_bit(self.read(r), 7);
+                let carry = ith_bit(self.read(r), 7);
                 self.write(r, self.read(r) << 1);
                 self.set_flags(Flags {
                     z: self.read(r) == 0,
@@ -1342,7 +1337,7 @@ impl Cpu {
             ShiftLeftHL => {
                 let address = self.read_word(Register16bit::HL);
                 let val = self.mem.read(address);
-                let carry = Cpu::ith_bit(val, 7);
+                let carry = ith_bit(val, 7);
                 self.mem.write(address, val << 1);
                 self.set_flags(Flags {
                     z: self.mem.read(address) == 0,
@@ -1354,8 +1349,8 @@ impl Cpu {
             }
             //sra  r         CB 2x        8 z00c shift right arithmetic (b7=b7)
             ShiftRightArithmeticRegister { r } => {
-                let carry = Cpu::ith_bit(self.read(r), 0);
-                let sign_bit = Cpu::ith_bit(self.read(r), 7);
+                let carry = ith_bit(self.read(r), 0);
+                let sign_bit = ith_bit(self.read(r), 7);
                 self.write(r, (self.read(r) >> 1) | ((sign_bit as u8) << 7));
                 self.set_flags(Flags {
                     z: self.read(r) == 0,
@@ -1369,8 +1364,8 @@ impl Cpu {
             ShiftRightArithmeticHL => {
                 let address = self.read_word(Register16bit::HL);
                 let val = self.mem.read(address);
-                let carry = Cpu::ith_bit(val, 0);
-                let sign_bit = Cpu::ith_bit(val, 7);
+                let carry = ith_bit(val, 0);
+                let sign_bit = ith_bit(val, 7);
                 self.mem.write(address, (val >> 1) | ((sign_bit as u8) << 7));
                 self.set_flags(Flags {
                     z: self.mem.read(address) == 0,
@@ -1406,7 +1401,7 @@ impl Cpu {
             }
             //srl  r         CB 3x        8 z00c shift right logical (b7=0)
             ShiftRightLogicalRegister { r } => {
-                let carry = Cpu::ith_bit(self.read(r), 0);
+                let carry = ith_bit(self.read(r), 0);
                 self.write(r, self.read(r) >> 1);
                 self.set_flags(Flags {
                     z: self.read(r) == 0,
@@ -1420,7 +1415,7 @@ impl Cpu {
             ShiftRightLogicalHL => {
                 let address = self.read_word(Register16bit::HL);
                 let val = self.mem.read(address);
-                let carry = Cpu::ith_bit(val, 0);
+                let carry = ith_bit(val, 0);
                 self.mem.write(address, val >> 1);
                 self.set_flags(Flags {
                     z: self.mem.read(address) == 0,
@@ -1435,7 +1430,7 @@ impl Cpu {
             TestBitRegister { bit, r } => {
                 assert!(bit <= 7);
                 self.set_flags(Flags {
-                    z: !Cpu::ith_bit(self.read(r), bit),
+                    z: !ith_bit(self.read(r), bit),
                     n: false,
                     h: true,
                     c: self.get_flag(ConditionalFlag::Carry),
@@ -1447,7 +1442,7 @@ impl Cpu {
                 assert!(bit <= 7);
                 let address = self.read_word(Register16bit::HL);
                 self.set_flags(Flags {
-                    z: !Cpu::ith_bit(self.mem.read(address), bit),
+                    z: !ith_bit(self.mem.read(address), bit),
                     n: false,
                     h: true,
                     c: self.get_flag(ConditionalFlag::Carry),
@@ -1458,7 +1453,7 @@ impl Cpu {
             SetBitRegister { bit, r } => {
                 assert!(bit <= 7);
                 self.write(r, self.read(r) | 1 << bit);
-                assert!(Cpu::ith_bit(self.read(r), bit));
+                assert!(ith_bit(self.read(r), bit));
                 8
             }
             //set  n,(HL)    CB xx       16 ---- set bit n
@@ -1467,14 +1462,14 @@ impl Cpu {
                 let address = self.read_word(Register16bit::HL);
                 let val = self.mem.read(address);
                 self.mem.write(address, val | (1 << bit));
-                assert!(Cpu::ith_bit(self.mem.read(address), bit));
+                assert!(ith_bit(self.mem.read(address), bit));
                 16
             }
             //res  n,r       CB xx        8 ---- reset bit n
             ResetBitRegister { bit, r } => {
                 assert!(bit <= 7);
                 self.write(r, self.read(r) & !(1 << bit));
-                assert!(!Cpu::ith_bit(self.read(r), bit));
+                assert!(!ith_bit(self.read(r), bit));
                 8
             }
             //res  n,(HL)    CB xx       16 ---- reset bit n
@@ -1483,7 +1478,7 @@ impl Cpu {
                 let address = self.read_word(Register16bit::HL);
                 let val = self.mem.read(address);
                 self.mem.write(address, val & !(1 << bit));
-                assert!(!Cpu::ith_bit(self.mem.read(address), bit));
+                assert!(!ith_bit(self.mem.read(address), bit));
                 16
             }
             //GMB CPU-Control Commands
@@ -2574,7 +2569,6 @@ impl Cpu {
                         },
                         2,
                     ),
-                    _ => unreachable!(),
                 }
             }
             //GMB CPU-Control Commands
