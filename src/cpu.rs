@@ -6,11 +6,7 @@ use crate::instructions::Instruction;
 pub const VIDEO_WIDTH: u32 = 160;
 pub const VIDEO_HEIGHT: u32 = 144;
 
-const HORIZONTAL_SYNC: f64 = 9_198_000.0;
-const VERTICAL_SYNC: f64 = 59.73;
-
 const CLOCK_FREQUENCY: f64 = 4_194_304.0;
-const DIV_FREQUENCY: f64 = CLOCK_FREQUENCY / 256.0;
 
 pub const OAM: u16 = 0xFE00;
 
