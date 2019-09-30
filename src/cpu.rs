@@ -540,7 +540,7 @@ impl Cpu {
         (
             res as u16,
             Flags {
-                z: res == 0,
+                z: (res as u16) == 0,
                 n: false,
                 h: ((a as u32 ^ b as u32 ^ res) & 0x1000) == 0x1000,
                 c: res > 0xFFFF,
@@ -553,7 +553,7 @@ impl Cpu {
         (
             res as u16,
             Flags {
-                z: res == 0,
+                z: (res as u16) == 0,
                 n: true,
                 h: ((a as i32 ^ -(b as i32) ^ res) & 0x1000) == 0x1000,
                 c: res < 0,
@@ -566,7 +566,7 @@ impl Cpu {
         (
             res as u8,
             Flags {
-                z: res == 0,
+                z: (res as u8) == 0,
                 n: false,
                 h: ((a as u16 ^ b as u16 ^ res) & 0x0010) == 0x0010,
                 c: res > 0xFF,
@@ -579,7 +579,7 @@ impl Cpu {
         (
             res as u8,
             Flags {
-                z: res == 0,
+                z: (res as u8) == 0,
                 n: true,
                 h: ((a as i16 ^ -(b as i16) ^ res) & 0x0010) == 0x0010,
                 c: res < 0,
