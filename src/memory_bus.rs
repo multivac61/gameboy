@@ -133,7 +133,14 @@ impl MemoryBus {
                     self.ram_banks[address] = data;
                 }
             }
-            0xE000..=0xFDFF => unreachable!(),
+            0xC000..=0xDDFF => {
+                self.raw_memory[address as usize] = data;
+                self.raw_memory[address as usize + (0xE000 - 0xC000)] = data;
+            }
+            0xE000..=0xFDFF => {
+                self.raw_memory[address as usize] = data;
+                self.raw_memory[address as usize - (0xE000 - 0xC000)] = data;
+            },
             0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
             DIV => self.raw_memory[DIV as usize] = 0,
             DMA => {
