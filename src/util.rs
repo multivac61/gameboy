@@ -1,9 +1,9 @@
 pub(crate) mod little_endian {
-    pub fn msb(val: u16) -> u8 {
-        (val & 0x0F) as u8
+    pub fn lsb(val: u16) -> u8 {
+        (val & 0xFF) as u8
     }
 
-    pub fn lsb(val: u16) -> u8 {
+    pub fn msb(val: u16) -> u8 {
         (val >> 8) as u8
     }
 
