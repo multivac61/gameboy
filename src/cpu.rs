@@ -496,12 +496,12 @@ impl Cpu {
     }
 
     fn write_word(&mut self, r: Register16bit, val: u16) {
-        self.reg[r as usize] = little_endian::lsb(val);
-        self.reg[r as usize + 1] = little_endian::msb(val);
+        self.reg[r as usize] = little_endian::msb(val);
+        self.reg[r as usize + 1] = little_endian::lsb(val);
     }
 
     fn read_word(&self, r: Register16bit) -> u16 {
-        little_endian::u16(self.reg[r as usize], self.reg[r as usize + 1])
+        little_endian::u16(self.reg[r as usize + 1], self.reg[r as usize])
     }
 
     fn write(&mut self, r: Register, val: u8) {
