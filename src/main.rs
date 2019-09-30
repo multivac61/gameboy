@@ -9,7 +9,12 @@ mod cpu;
 mod util;
 
 fn main() {
-    let mut file = File::open("/home/horigome/dev/rust/gameboy/src/Tetris.gb")
+    let file_path = std::env::current_dir() .unwrap()
+        .join(std::path::Path::new("src"))
+        .join(std::path::Path::new("Tetris.gb"));
+
+    println!("{:?}", file_path);
+    let mut file = File::open(file_path)
         .expect("There was an issue opening the file");
 //    let mut file = File::open("/home/horigome/dev/rust/gb-test-roms/cpu_instrs/cpu_instrs.gb")
 //        .expect("There was an issue opening the file");

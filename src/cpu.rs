@@ -484,7 +484,7 @@ impl Cpu {
                 3 => "\t",
                 _ => unreachable!()
             };
-            println!("PC: {:4x?}, SP: {:4x?}, bytes: {:2x?}, {} regs: {:2x?}, \t {:x?}, \t {:08b}", self.pc, self.sp, v, tabs, self.reg, instruction, self.reg[Register::F as usize]);
+            println!("PC: {:4x?}, SP: {:4x?}, bytes: {:2x?}, {} regs: {:2x?}, \t {:08b}, \t {:x?}", self.pc, self.sp, v, tabs, self.reg, self.reg[Register::F as usize], instruction);
 
             self.pc += pc_increments;
             let cycles = self.execute_instruction(instruction);

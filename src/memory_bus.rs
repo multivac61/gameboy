@@ -34,7 +34,11 @@ impl MemoryBus {
 
         m[0..0x4000].copy_from_slice(&cartridge[0..0x4000]);
 
-        let mut file = File::open("/home/horigome/dev/rust/gameboy/src/DMG_ROM.bin")
+        let file_path = std::env::current_dir() .unwrap()
+            .join(std::path::Path::new("src"))
+            .join(std::path::Path::new("DMG_ROM.bin"));
+
+        let mut file = File::open(file_path)
             .expect("There was an issue opening the file");
         let mut buffer = Vec::new();
         let _bytes_read = file.read_to_end(&mut buffer);
