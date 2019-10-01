@@ -1129,7 +1129,7 @@ impl Cpu {
             //dec  rr        xB           8 ---- rr = rr-1      ;rr may be BC,DE,HL,SP
             DecrementRegister16bit { r } => {
                 let (val, _) = Cpu::sub_16bit(self.read_word(r), 1);
-                self.write_word(Register16bit::HL, val);
+                self.write_word(r, val);
                 8
             }
             DecrementSP {} => {
