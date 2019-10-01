@@ -143,17 +143,17 @@ impl std::convert::From<u8> for Interrupt {
 
 #[derive(Clone, Copy)]
 pub enum Rom {
-    Local = 1,
-    Bank1 = 2,
-    Bank2 = 3,
+    Local = 0,
+    Bank1 = 1,
+    Bank2 = 2,
 }
 
 impl std::convert::From<u8> for Rom {
     fn from(n: u8) -> Rom {
         match n {
-            1 => Rom::Local,
-            2 => Rom::Bank1,
-            3 => Rom::Bank2,
+            0 => Rom::Local,
+            1 => Rom::Bank1,
+            2 => Rom::Bank2,
             _ => unreachable!()
         }
     }

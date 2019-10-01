@@ -171,7 +171,12 @@ impl MemoryBus {
                 }
             },
             0x4000..=0x7FFF => {
-                self.cartridge[address as usize - 0x4000 + 0x4000 * self.rom_bank as usize]
+                if (self.is_rom_banking) {
+                    self.cartridge[address as usize - 0x4000 + 0x4000 * self.rom_bank as usize]
+                }
+                else {
+                    self.cartridge[address as usize]
+                }
             }
             0xA000..=0xBFFF => {
                 self.ram_banks[address as usize - 0xA000 + 0x2000 * self.ram_bank as usize]
