@@ -780,30 +780,30 @@ impl Cpu {
             }
             //  adc  A,r         8x         4 z0hc A=A+r+cy
             AddRegisterWithCarry { r } => {
-                let b = self.read(r) + self.get_flag(ConditionalFlag::Carry) as u8;
+                let (b, f_b) = Cpu::add_8bit(self.read(r), self.get_flag(ConditionalFlag::Carry) as u8);
                 let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(f);
+                self.set_flags(Flags{z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c});
                 4
             }
             //  adc  A,n         CE nn      8 z0hc A=A+n+cy
             AddConstantWithCarry { n } => {
-                let b = n + self.get_flag(ConditionalFlag::Carry) as u8;
+                let (b, f_b) = Cpu::add_8bit(n, self.get_flag(ConditionalFlag::Carry) as u8);
                 let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(f);
+                self.set_flags(Flags{z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c});
                 8
             }
             //  adc  A,(HL)      8E         8 z0hc A=A+(HL)+cy
             AddMemoryHLWithCarry => {
                 let address = self.read_word(Register16bit::HL);
-                let b = self.mem.read(address) + self.get_flag(ConditionalFlag::Carry) as u8;
+                let (b, f_b) = Cpu::add_8bit(self.mem.read(address), self.get_flag(ConditionalFlag::Carry) as u8);
                 let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(f);
+                self.set_flags(Flags{z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c});
                 8
             }
             //  sub  r           9x         4 z1hc A=A-r
@@ -832,28 +832,30 @@ impl Cpu {
             }
             //  sbc  A,r         9x         4 z1hc A=A-r-cy
             SubtractRegisterWithCarry { r } => {
-                let val = self.read(r) - self.get_flag(ConditionalFlag::Carry) as u8;
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), val);
+                let (b, f_b) = Cpu::sub_8bit(self.read(r), self.get_flag(ConditionalFlag::Carry) as u8);
+                let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
+
                 self.write(Register::A, val);
-                self.set_flags(f);
+                self.set_flags(Flags{z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c});
                 4
             }
             //  sbc  A,n         DE nn      8 z1hc A=A-n-cy
             SubtractConstantWithCarry { n } => {
-                let val = n - self.get_flag(ConditionalFlag::Carry) as u8;
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), val);
+                let (b, f_b) = Cpu::sub_8bit(n, self.get_flag(ConditionalFlag::Carry) as u8);
+                let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
+
                 self.write(Register::A, val);
-                self.set_flags(f);
+                self.set_flags(Flags{z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c});
                 4
             }
             //  sbc  A,(HL)      9E         8 z1hc A=A-(HL)-cy
             SubtractMemoryHLWithCarry => {
                 let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address) - self.get_flag(ConditionalFlag::Carry) as u8;
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), val);
+                let (b, f_b) = Cpu::sub_8bit(self.mem.read(address), self.get_flag(ConditionalFlag::Carry) as u8);
+                let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(f);
+                self.set_flags(Flags{z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c});
                 8
             }
             //  and  r           Ax         4 z010 A=A & r
