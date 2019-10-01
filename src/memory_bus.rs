@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{MemoryAddress, OAM, Rom, Ram, DIV, DMA};
+use crate::cpu::{MemoryAddress, OAM, Rom, Ram, DIV, DMA, BOOT_ROM_ENABLE_REGISTER};
 use crate::util::{little_endian, ith_bit};
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
@@ -19,12 +19,14 @@ use crate::util::{little_endian, ith_bit};
 
 pub struct MemoryBus {
     pub raw_memory: Vec<u8>,
+    boot_rom: Vec<u8>,
     cartridge: Vec<u8>,
     ram_banks: Vec<u8>,
     ram_bank: Ram,
     rom_bank: Rom,
     should_enable_ram: bool,
     is_rom_banking: bool,
+    is_boot_rom_enabled: bool
 }
 
 impl MemoryBus {
@@ -38,11 +40,10 @@ impl MemoryBus {
             .join(std::path::Path::new("src"))
             .join(std::path::Path::new("DMG_ROM.bin"));
 
-        let mut file = File::open(file_path)
-            .expect("There was an issue opening the file");
+        let mut file = File::open(file_path) .expect("There was an issue opening the file");
         let mut buffer = Vec::new();
         let _bytes_read = file.read_to_end(&mut buffer);
-        m[0..0x100].copy_from_slice(&buffer.as_slice());
+        assert!(_bytes_read.unwrap() == 0x100);
 
         let b = match cartridge[0x147] {
             0 => Rom::Local,
@@ -53,12 +54,14 @@ impl MemoryBus {
 
         MemoryBus {
             raw_memory: m,
+            boot_rom: buffer,
             cartridge: cartridge.to_vec(),
             ram_banks: vec![0; 4 * 0x2000],
             ram_bank: Ram::Bank0,
             rom_bank: b,
             should_enable_ram: false,
             is_rom_banking: false,
+            is_boot_rom_enabled: false,
         }
     }
 
@@ -146,7 +149,10 @@ impl MemoryBus {
             DMA => {
                 let source = little_endian::u16(0, data) as usize;
                 self.raw_memory.copy_within(source..source + 0xA0, OAM as usize);
-            }
+            },
+            BOOT_ROM_ENABLE_REGISTER=> {
+                self.is_boot_rom_enabled = data == 0;
+            },
             _ => self.raw_memory[address as usize] = data,
         }
     }
@@ -157,6 +163,13 @@ impl MemoryBus {
 
     pub fn read(&self, address: MemoryAddress) -> u8 {
         match address {
+            0x0000..=0x00FF => {
+                if self.is_boot_rom_enabled {
+                    self.boot_rom[address as usize]
+                } else {
+                    self.raw_memory[address as usize]
+                }
+            },
             0x4000..=0x7FFF => {
                 self.cartridge[address as usize - 0x4000 + 0x4000 * self.rom_bank as usize]
             }

@@ -37,6 +37,7 @@ const BLACK: u8 = 0;
 
 const INTERRUPT_REQUEST_REGISTER: u16 = 0xFF0F;
 const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
+pub const BOOT_ROM_ENABLE_REGISTER: u16 = 0xFF50;
 
 pub type MemoryAddress = u16;
 
