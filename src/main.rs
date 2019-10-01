@@ -1,71 +1,73 @@
 use std::fs::File;
 use std::io::Read;
+use std::time::*;
+use std::thread::sleep;
 
-use piston_window::*;
+//use piston_window::*;
+use minifb::{Key, Window, WindowOptions};
 
 mod instructions;
 mod memory_bus;
 mod cpu;
 mod util;
 
+const ONE_SECOND_IN_MICROS: usize = 1000000000;
+const ONE_SECOND_IN_CYCLES: usize = 4190000;
+const ONE_FRAME_IN_CYCLES: usize = 70224;
+const NUMBER_OF_PIXELS: usize = 23040;
+
+const ENLARGEMENT_FACTOR: usize = 1;
+const WINDOW_DIMENSIONS: [usize; 2] = [(160 * ENLARGEMENT_FACTOR), (144 * ENLARGEMENT_FACTOR)];
+
 fn main() {
     let file_path = std::env::current_dir() .unwrap()
-        .join(std::path::Path::new("src"))
-        .join(std::path::Path::new("Tetris.gb"));
+//        .join(std::path::Path::new("src"))
+//        .join(std::path::Path::new("Tetris.gb"));
+        .join(std::path::Path::new(".."))
+        .join(std::path::Path::new("gb-test-roms"))
+        .join(std::path::Path::new("cpu_instrs"))
+        .join(std::path::Path::new("individual"))
+        .join(std::path::Path::new("06-ld r,r.gb"));
+//        .join(std::path::Path::new("04-op r,imm.gb"));
+
+//    let file_path = std::path::Path::new("/home/dingari/vblank_stat_intr-C.gb");
 
     println!("{:?}", file_path);
-    let mut file = File::open(file_path)
-        .expect("There was an issue opening the file");
-//    let mut file = File::open("/home/horigome/dev/rust/gb-test-roms/cpu_instrs/cpu_instrs.gb")
-//        .expect("There was an issue opening the file");
+    let mut file = File::open(file_path).expect("There was an issue opening the file");
     let mut buffer = Vec::new();
     let _bytes_read = file.read_to_end(&mut buffer);
 
     let mut cpu = cpu::Cpu::new(buffer.as_slice());
 
-    const GUI_SCALE: f64 = 5.0;
-    let window_dimensions = [cpu::VIDEO_WIDTH * GUI_SCALE as u32, cpu::VIDEO_HEIGHT * GUI_SCALE as u32];
-    let mut window: PistonWindow = WindowSettings::new("Chip-8 Interpreter", window_dimensions)
-        .exit_on_esc(true)
-        .build()
-        .expect("Failed to create a piston window");
+    let mut window = Window::new(
+        "DMG-01",
+        WINDOW_DIMENSIONS[0],
+        WINDOW_DIMENSIONS[1],
+        WindowOptions::default(),
+    )
+        .unwrap();
 
-    while let Some(e) = window.next() {
-        if e.render_args().is_some() {
-            window.draw_2d(&e, |context, graphics, _| {
-                piston_window::clear(color::BLACK, graphics);
+    let mut framebuffer = vec![0u32; WINDOW_DIMENSIONS[0] * WINDOW_DIMENSIONS[1]];
+    let mut cycles_elapsed_in_frame = 0usize;
+    let mut now = Instant::now();
+    while window.is_open() && !window.is_key_down(Key::Escape) {
+        let time_delta = now.elapsed().subsec_nanos();
+        now = Instant::now();
+        let delta = time_delta as f64 / ONE_SECOND_IN_MICROS as f64;
 
-                for (i, row) in cpu.display.iter().enumerate() {
-                    for (j, &val) in row.iter().enumerate() {
-                        if val > 0 {
-                            let d = [
-                                j as f64 * GUI_SCALE,
-                                i as f64 * GUI_SCALE,
-                                GUI_SCALE,
-                                GUI_SCALE,
-                            ];
-                            Rectangle::new(color::grey(f32::from(val) / 255.0)).draw(
-                                d,
-                                &context.draw_state,
-                                context.transform,
-                                graphics,
-                            );
-                        }
-                    }
-                }
-            });
+        let cycles_elapsed = cpu.cycle(delta) as usize;
+        cycles_elapsed_in_frame += cycles_elapsed;
+
+        // TODO: Consider updating buffer after every line is rendered.
+        if cycles_elapsed_in_frame >= ONE_FRAME_IN_CYCLES {
+            for (i, pixel) in cpu.display.iter().enumerate() {
+                framebuffer[i] = *pixel;
+            }
+
+            window.update_with_buffer(&framebuffer).unwrap();
+            cycles_elapsed_in_frame = 0;
+        } else {
+            sleep(Duration::from_nanos(2))
         }
-
-        if let Some(u) = e.update_args() {
-            cpu.cycle(u.dt);
-        }
-
-        //        if let Some(Button::Keyboard(key)) = e.release_args() {
-        //            cpu.handle_key(key.code(), false);
-        //        }
-        //
-        //        if let Some(Button::Keyboard(key)) = e.press_args() {
-        //            cpu.handle_key(key.code(), true);
-        //
     }
 }

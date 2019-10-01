@@ -40,6 +40,8 @@ const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
 
 pub type MemoryAddress = u16;
 
+enum TileType { Background, Window }
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Register { B, C, D, E, H, L, A, F }
 
@@ -175,7 +177,7 @@ pub struct Cpu {
     timer_counter: i64,
     scan_counter: i64,
     divider_counter: u16,
-    pub display: [[u8; 140]; 160],
+    pub display: [u32; 160 * 144],
 }
 
 struct Flags {
@@ -198,7 +200,7 @@ impl Cpu {
             timer_counter: 1024,
             scan_counter: 0,
             divider_counter: 0,
-            display: [[0; 140]; 160],
+            display: [0; 160 * 144],
         }
     }
 
@@ -241,7 +243,7 @@ impl Cpu {
 
         let set_mode_bits = |status, mode| (status & 0b1111_1100) | mode as u8;
 
-        if is_enabled {
+        if !is_enabled {
             // set the mode to 1 during lcd disabled and reset scan line
             self.scan_counter = SCANLINE_CPU_CYCLES;
             self.mem.write(LY, 0);
@@ -267,7 +269,7 @@ impl Cpu {
             self.request_interrupt(Interrupt::LCD);
         }
 
-        // check the conincidence flag
+        // check the coincidence flag
         let new_status = if line == self.mem.read(LYC) {
             if ith_bit(status, 6) {
                 self.request_interrupt(Interrupt::LCD);
@@ -288,11 +290,11 @@ impl Cpu {
 
             if line < 144 {
                 if ith_bit(control, LcdControl::BackgroundEnable as u8) {
-                    self.render_tiles();
+                    self.render_tiles(line);
                 }
 
                 if ith_bit(control, LcdControl::ObjectEnable as u8) {
-                    self.render_sprites();
+//                    self.render_sprites();
                 }
             } else if line == 144 {
                 self.request_interrupt(Interrupt::VBlank);
@@ -302,83 +304,72 @@ impl Cpu {
         }
     }
 
-    fn render_tiles(&mut self) {
-        // where to draw the visual area and the window
+    fn get_tile_data(&self, x: u8, y: u8, tile_type: TileType) -> u16 {
+        let control = self.mem.read(LCDC);
+
+        let get_tile_num = |x, y| -> u8 {
+            let (row, col) = (y / 8, x / 8);
+
+            let map_select_bit = match tile_type {
+                TileType::Background => LcdControl::BackgroundTileMapSelect as u8,
+                TileType::Window => LcdControl::WindowTileMapSelect as u8,
+            };
+
+            // The Background Tile Map stores a 32x32 tile grid with corresponding tile numbers (one byte each).
+            let tile_num_base = if ith_bit(control, map_select_bit) { 0x9C00 } else { 0x9800 };
+            let tile_num_address = tile_num_base + row as u16 * 32 + col as u16;
+
+            let bg_tile_map = self.mem.raw_memory[tile_num_base as usize .. tile_num_base as usize + 32*32].to_vec();
+
+            self.mem.read(tile_num_address)
+        };
+
+        // Tiles consist of 8x8 pixels. Each line of the tile occupies two bytes in memory (16 consecutive bytes total for any given tile).
+        let tile_address = if ith_bit(control, LcdControl::BackgroundAndWindodwTileDataSelect as u8) {
+            let tile_num = get_tile_num(x, y) as u8;
+            0x8000 + tile_num as u16 * 16
+        } else {
+            let tile_num = get_tile_num(x, y) as i8;
+            0x8800 + (tile_num as i16 + 128) as u16 * 16
+        };
+
+        let tile_data = self.mem.raw_memory[0x8000..0x9000].to_vec();
+
+        self.mem.read_word(tile_address + 2 * (y % 8) as u16)
+    }
+
+    fn render_tiles(&mut self, line: u8) {
         let (scroll_x, scroll_y) = (self.mem.read(SCX), self.mem.read(SCY));
         let (window_x, window_y) = (self.mem.read(WX), self.mem.read(WY));
 
-        // is the window enabled?
-        let line = self.mem.read(LY);
         let control = self.mem.read(LCDC);
-
-        // which tile data are we using?
-        let tile_data_address: u16 = if ith_bit(
-            control,
-            LcdControl::BackgroundAndWindodwTileDataSelect as u8,
-        ) {
-            0x8000
-        } else {
-            0x8800
-        };
 
         let is_window_enabled = ith_bit(control, LcdControl::WindowDisplayEnable as u8);
         let is_window_visible = is_window_enabled && window_y <= line;
 
-        let map_select = if is_window_visible {
-            LcdControl::WindowTileMapSelect
-        } else {
-            LcdControl::BackgroundTileMapSelect
-        };
-        let bg_address: u16 = if ith_bit(control, map_select as u8) {
-            0x9C00
-        } else {
-            0x9800
-        };
-
         let y_pos = if is_window_visible {
-            line + scroll_y
-        } else {
             line - window_y
+        } else {
+            let (val, _) = Cpu::add_8bit(line, scroll_y);
+            val
         };
 
-        // which of the 8 vertical pixels of the current tile is the scanline on?
-        let row = (y_pos / 8) * 32;
-
-        // time to start drawing the 160 horizontal pixels // for this scanline
-        for pixel in 0..160 {
-            // translate the current x pos to window space if necessary
-            let x_pos = if is_window_visible && pixel >= window_x {
-                pixel - window_x
+        for x in 0..160 {
+            let (x_pos, tile_type) = if is_window_visible && x >= window_x {
+                (x - window_x, TileType::Window)
             } else {
-                pixel + scroll_x
+                let (val, _) = Cpu::add_8bit(x, scroll_x);
+                (val, TileType::Background)
             };
 
-            // which of the 32 horizontal tiles does this xPos fall within?
-            let col = x_pos / 8;
+            let (byte2, byte1) = little_endian::u8(self.get_tile_data(x_pos, y_pos, tile_type));
 
-            // get the tile identity number. Remember it can be signed
-            // or unsigned
-            let tile_num = self.mem.read(bg_address + u16::from(row) + u16::from(col));
+            let colour_bit_num = 7 - (x & 0b0111);
+            let color_num = ((ith_bit(byte2, colour_bit_num) as u8) << 1)
+                | ith_bit(byte1, colour_bit_num) as u8;
 
-            // deduce where this tile identifier is in memory. Remember i shown this algorithm earlier
-            let tile_location = if tile_data_address == 0x8800 {
-                tile_data_address + u16::from(tile_num) * 16
-            } else {
-                (i32::from(tile_data_address) + (i32::from(tile_num) + 128) * 16) as u16
-            };
-
-            // find the correct vertical line we're on of the tile to get the tile data from in memory
-            // each vertical line takes up two bytes of memory
-            let object_y = 2 * (y_pos % 8);
-            let (data2, data1) =
-                little_endian::u8(self.mem.read_word(tile_location + u16::from(object_y)));
-
-            let colour_bit_num = 1 << (x_pos & 0b0111);
-            let color_num = ((ith_bit(data2, colour_bit_num) as u8) << 1)
-                | ith_bit(data1, colour_bit_num) as u8;
-
-            let c = self.get_color(color_num, BGP);
-            self.display[line as usize][pixel as usize] = c;
+            let c = self.get_color(color_num, BGP) as u32;
+            self.display[line as usize * 160 + x as usize] = (0xff << 24) | (c << 16) | (c << 8) | c;
         }
     }
 
@@ -423,11 +414,11 @@ impl Cpu {
 
                     let color_address = if ith_bit(attribute, 4) { OBP1 } else { OBP0 };
 
-                    let c = self.get_color(color_num, color_address);
+                    let c = self.get_color(color_num, color_address) as u32;
 
                     // white is transparent
-                    if c != WHITE {
-                        self.display[line as usize][x_pos as usize + pixel as usize] = c;
+                    if c != (WHITE as u32) {
+                        self.display[line as usize * 160 + x_pos as usize + pixel as usize] = (0xff << 24) | (c << 16) | (c << 8) | c;
                     }
                 }
             }
@@ -493,6 +484,8 @@ impl Cpu {
             self.update_graphics(cycles);
             self.do_interrupts();
         }
+
+        total_cycles as usize
     }
 
     fn write_word(&mut self, r: Register16bit, val: u16) {
