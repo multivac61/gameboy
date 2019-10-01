@@ -458,25 +458,27 @@ impl Cpu {
         }
     }
 
-    pub fn cycle(&mut self, s: f64) {
-        if self.is_halted {
-            return;
-        }
-
+    pub fn cycle(&mut self, s: f64) -> usize {
         let total_cycles = (s * CLOCK_FREQUENCY).round() as u64;
         let mut cur_num_cycles = 0;
-        while cur_num_cycles < total_cycles {
+
+        while cur_num_cycles < total_cycles && !self.is_halted {
             let (instruction, pc_increments) = self.fetch_instruction();
 
             #[cfg(debug_assertions)]
-                let v = self.mem.raw_memory[self.pc as usize..self.pc as usize + pc_increments as usize].to_vec();
-            let tabs = match v.len() {
-                1 => "\t\t\t",
-                2 => "\t\t",
-                3 => "\t",
-                _ => unreachable!()
-            };
-            println!("PC: {:4x?}, SP: {:4x?}, bytes: {:2x?}, {} regs: {:2x?}, \t {:08b}, \t {:x?}", self.pc, self.sp, v, tabs, self.reg, self.reg[Register::F as usize], instruction);
+                {
+                    let v = self.mem.raw_memory[self.pc as usize..self.pc as usize + pc_increments as usize].to_vec();
+                    let tabs = match v.len() {
+                        1 => "\t\t\t",
+                        2 => "\t\t",
+                        3 => "\t",
+                        _ => unreachable!()
+                    };
+
+                    let stack_data: u16 = if self.sp >= 0xffff { 0 } else { self.mem.read_word(self.sp) };
+                    println!("PC: {:4x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?}, {} regs: {:2x?}, \t {:08b}, \t LY: {:2x} \t {:x?}",
+                             self.pc, self.sp, stack_data, v, tabs, self.reg, self.reg[Register::F as usize], self.mem.read(LY), instruction);
+                }
 
             self.pc += pc_increments;
             let cycles = self.execute_instruction(instruction);
