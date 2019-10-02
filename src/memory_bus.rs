@@ -38,7 +38,7 @@ pub struct MemoryBus {
 }
 
 impl MemoryBus {
-    pub fn new(cartridge: &[u8]) -> Self {
+    pub fn new(cartridge: &[u8], enable_boot_rom: bool) -> Self {
         //        0100-014F contains the cartridge header
         let mut m = vec![0; 0x10000];
 

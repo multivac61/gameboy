@@ -166,8 +166,8 @@ impl Cpu {
     pub fn new(cartridge: &[u8]) -> Self {
         Cpu {
             reg: [0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D],
-            pc: 0,
-            mem: MemoryBus::new(cartridge),
+            pc: 0x100,
+            mem: MemoryBus::new(cartridge, false),
             sp: 0xFFFF,
             is_halted: false,
             is_stopped: false,
