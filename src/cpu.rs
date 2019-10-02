@@ -141,32 +141,6 @@ impl std::convert::From<u8> for Interrupt {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum Rom {
-    Local = 0,
-    Bank1 = 1,
-    Bank2 = 2,
-}
-
-impl std::convert::From<u8> for Rom {
-    fn from(n: u8) -> Rom {
-        match n {
-            0 => Rom::Local,
-            1 => Rom::Bank1,
-            2 => Rom::Bank2,
-            _ => unreachable!()
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum Ram {
-    Bank0,
-//    Bank1,
-//    Bank2,
-//    Bank3,
-}
-
 pub struct Cpu {
     reg: [u8; 8],
     pc: MemoryAddress,

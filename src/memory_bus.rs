@@ -1,8 +1,9 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{MemoryAddress, OAM, Rom, Ram, DIV, DMA, BOOT_ROM_ENABLE_REGISTER};
-use crate::util::{little_endian, ith_bit};
+use crate::cpu::{MemoryAddress, OAM, DIV, DMA, BOOT_ROM_ENABLE_REGISTER};
+use crate::util::little_endian;
+use std::hint::unreachable_unchecked;
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
 // 4000-7FFF 16KB ROM Bank 01..NN (in cartridge, switchable bank number)
@@ -17,16 +18,23 @@ use crate::util::{little_endian, ith_bit};
 // FF80-FFFE High RAM (HRAM)
 // FFFF Interrupt Enable Register
 
+enum MemoryBankType
+{
+    Local,
+    MBC1 { is_4mbit: bool },
+    MBC2,
+}
+
 pub struct MemoryBus {
     pub raw_memory: Vec<u8>,
     boot_rom: Vec<u8>,
     cartridge: Vec<u8>,
     ram_banks: Vec<u8>,
-    ram_bank: Ram,
-    rom_bank: Rom,
+    ram_bank: u8,
+    rom_type: MemoryBankType,
+    rom_bank: u8,
     should_enable_ram: bool,
-    is_rom_banking: bool,
-    is_boot_rom_enabled: bool
+    is_boot_rom_enabled: bool,
 }
 
 impl MemoryBus {
@@ -46,9 +54,9 @@ impl MemoryBus {
         assert!(_bytes_read.unwrap() == 0x100);
 
         let b = match cartridge[0x147] {
-            0 => Rom::Local,
-            1..=3 => Rom::Bank1,
-            5..=6 => Rom::Bank2,
+            0 => MemoryBankType::Local,
+            1..=3 => MemoryBankType::MBC1 { is_4mbit: false },
+            5..=6 => MemoryBankType::MBC2,
             _ => unreachable!(),
         };
 
@@ -57,11 +65,11 @@ impl MemoryBus {
             boot_rom: buffer,
             cartridge: cartridge.to_vec(),
             ram_banks: vec![0; 4 * 0x2000],
-            ram_bank: Ram::Bank0,
-            rom_bank: b,
+            ram_bank: 0,
+            rom_type: b,
+            rom_bank: 1,
             should_enable_ram: false,
-            is_rom_banking: false,
-            is_boot_rom_enabled: false,
+            is_boot_rom_enabled: enable_boot_rom,
         }
     }
 
@@ -85,50 +93,65 @@ impl MemoryBus {
         //        FFFF        Interrupt Enable Register0
         match address {
             0x0000..=0x1FFF => {
-                // Ram Enable
-                // Do RAM bank Enable
-                if let Rom::Bank2 = self.rom_bank {
-                    if ith_bit(self.read(address), 4) {
-                        return;
-                    }
-                }
-
-                if data & 0x0F == 0x0A {
-                    self.should_enable_ram = true;
-                } else if data & 0x0F == 0x00 {
-                    self.should_enable_ram = false;
-                }
+                self.should_enable_ram = match self.rom_type {
+                    MemoryBankType::Local => false,
+                    MemoryBankType::MBC1 { is_4mbit: false } => data & 0x0F == 0x0A,
+                    _ => unreachable!()
+                };
             }
             0x2000..=0x3FFF => {
-                let new_bank = match self.rom_bank {
-                    Rom::Bank1 => {
-                        (self.rom_bank as u8 & 244) | (data & 31)
+                self.rom_bank = match self.rom_type {
+                    MemoryBankType::Local => 1,
+                    MemoryBankType::MBC1 { is_4mbit: _ } => {
+                        match data {
+                            0..=1 => 1,
+                            _ => data & 0b0001_1111
+                        }
                     }
-                    Rom::Bank2 => {
-                        (data & 0xF)
+                    MemoryBankType::MBC2 => {
+                        // The least significant bit of the upper address
+                        // byte must be zero to enable/disable cart RAM.
+                        if (address >> 8) & 0x01 == 0x00 {
+                            self.should_enable_ram = true;
+                            self.rom_bank
+                        } else {
+                            // The least significant bit of the upper address
+                            // byte must be one to select a ROM bank.
+                            data & 0b0000_1111
+                        }
                     }
-                    _ => 0
                 };
-                self.rom_bank = Rom::from(new_bank);
             }
             0x4000..=0x5FFF => {
-                if let Rom::Bank1 = self.rom_bank {
-                    let new_bank = if self.is_rom_banking {
-                        (self.rom_bank as u8) & 0b0001_1111 | (data & 0b1110_0000)
-                    } else {
-                        self.rom_bank as u8 & 0b0000_0011
-                    };
-                    self.rom_bank = Rom::from(new_bank);
-                }
+                match self.rom_type {
+                    MemoryBankType::MBC1 { is_4mbit } => {
+                        if is_4mbit {
+                            // If memory model is set to 4/32:
+                            // Writing a value (XXXXXXBB - X = Don't care, B =
+                            // bank select bits) into 4000-5FFF area will select
+                            // an appropriate RAM bank at A000-C000.
+                            self.ram_bank = data & 0b0000_0011;
+                        } else {
+                            // If memory model is set to 16/8 mode:
+                            // Writing a value (XXXXXXBB - X = Don't care, B =
+                            // bank select bits) into 4000-5FFF area will set the
+                            // two most significant ROM address lines.
+                            self.rom_bank &= 0b0001_11111;
+                            self.rom_bank |= (data & 0b11) << 6;
+                        }
+                    }
+                    _ => unreachable!()
+                };
             }
             0x6000..=0x7FFF => {
-                if let Rom::Bank1 = self.rom_bank {
-                    // Change ROM/RAM mode
-                    self.is_rom_banking = data & 0x01 == 0x01;
-                    if self.is_rom_banking {
-                        self.ram_bank = Ram::Bank0;
+                match self.rom_type {
+                    MemoryBankType::MBC1 { is_4mbit: _ } => {
+                        // 0: 16MBit ROM / 8KByte RAM
+                        // 1: 4Mbit ROM / 32KByte RAM
+                        self.rom_type = MemoryBankType::MBC1 { is_4mbit: data & 0x01 == 0x01 };
                     }
-                }
+                    _ => unreachable!()
+                };
             }
             0xA000..=0xBFFF => {
                 if self.should_enable_ram {
@@ -169,14 +192,9 @@ impl MemoryBus {
                 } else {
                     self.raw_memory[address as usize]
                 }
-            },
+            }
             0x4000..=0x7FFF => {
-                if (self.is_rom_banking) {
-                    self.cartridge[address as usize - 0x4000 + 0x4000 * self.rom_bank as usize]
-                }
-                else {
-                    self.cartridge[address as usize]
-                }
+                self.cartridge[address as usize - 0x4000 + 0x4000 * self.rom_bank as usize]
             }
             0xA000..=0xBFFF => {
                 self.ram_banks[address as usize - 0xA000 + 0x2000 * self.ram_bank as usize]
