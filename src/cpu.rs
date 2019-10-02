@@ -152,7 +152,7 @@ pub struct Cpu {
     timer_counter: i64,
     scan_counter: i64,
     divider_counter: u16,
-    pub display: [u32; 160 * 144],
+    pub display: [u32; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
 }
 
 struct Flags {
@@ -175,7 +175,7 @@ impl Cpu {
             timer_counter: 1024,
             scan_counter: 0,
             divider_counter: 0,
-            display: [0; 160 * 144],
+            display: [0; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
         }
     }
 
@@ -294,7 +294,7 @@ impl Cpu {
             let tile_num_base = if ith_bit(control, map_select_bit) { 0x9C00 } else { 0x9800 };
             let tile_num_address = tile_num_base + row as u16 * 32 + col as u16;
 
-            let bg_tile_map = self.mem.raw_memory[tile_num_base as usize .. tile_num_base as usize + 32*32].to_vec();
+            let bg_tile_map = self.mem.raw_memory[tile_num_base as usize..tile_num_base as usize + 32 * 32].to_vec();
 
             self.mem.read(tile_num_address)
         };
@@ -329,7 +329,7 @@ impl Cpu {
             val
         };
 
-        for x in 0..160 {
+        for x in 0..VIDEO_WIDTH as u8 {
             let (x_pos, tile_type) = if is_window_visible && x >= window_x {
                 (x - window_x, TileType::Window)
             } else {
@@ -344,7 +344,7 @@ impl Cpu {
                 | ith_bit(byte1, colour_bit_num) as u8;
 
             let c = self.get_color(color_num, BGP) as u32;
-            self.display[line as usize * 160 + x as usize] = (0xff << 24) | (c << 16) | (c << 8) | c;
+            self.display[line as usize * VIDEO_WIDTH as usize + x as usize] = (0xff << 24) | (c << 16) | (c << 8) | c;
         }
     }
 
@@ -415,8 +415,7 @@ impl Cpu {
             if ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
                 self.are_interrupts_enabled = false;
                 let not_requested_anymore = is_requested & !(1 << i);
-                self.mem
-                    .write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
+                self.mem.write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
 
                 self.sp -= 2;
                 self.mem.write_word(self.sp, self.pc);
@@ -758,7 +757,7 @@ impl Cpu {
                 let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(Flags{z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c});
+                self.set_flags(Flags { z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c });
                 4
             }
             //  adc  A,n         CE nn      8 z0hc A=A+n+cy
@@ -767,7 +766,7 @@ impl Cpu {
                 let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(Flags{z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c});
+                self.set_flags(Flags { z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c });
                 8
             }
             //  adc  A,(HL)      8E         8 z0hc A=A+(HL)+cy
@@ -777,7 +776,7 @@ impl Cpu {
                 let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(Flags{z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c});
+                self.set_flags(Flags { z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c });
                 8
             }
             //  sub  r           9x         4 z1hc A=A-r
@@ -810,7 +809,7 @@ impl Cpu {
                 let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(Flags{z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c});
+                self.set_flags(Flags { z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c });
                 4
             }
             //  sbc  A,n         DE nn      8 z1hc A=A-n-cy
@@ -819,7 +818,7 @@ impl Cpu {
                 let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(Flags{z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c});
+                self.set_flags(Flags { z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c });
                 4
             }
             //  sbc  A,(HL)      9E         8 z1hc A=A-(HL)-cy
@@ -829,7 +828,7 @@ impl Cpu {
                 let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
 
                 self.write(Register::A, val);
-                self.set_flags(Flags{z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c});
+                self.set_flags(Flags { z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c });
                 8
             }
             //  and  r           Ax         4 z010 A=A & r

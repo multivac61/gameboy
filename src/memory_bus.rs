@@ -44,11 +44,11 @@ impl MemoryBus {
 
         m[0..0x4000].copy_from_slice(&cartridge[0..0x4000]);
 
-        let file_path = std::env::current_dir() .unwrap()
+        let file_path = std::env::current_dir().unwrap()
             .join(std::path::Path::new("src"))
             .join(std::path::Path::new("DMG_ROM.bin"));
 
-        let mut file = File::open(file_path) .expect("There was an issue opening the file");
+        let mut file = File::open(file_path).expect("There was an issue opening the file");
         let mut buffer = Vec::new();
         let _bytes_read = file.read_to_end(&mut buffer);
         assert!(_bytes_read.unwrap() == 0x100);
@@ -166,17 +166,15 @@ impl MemoryBus {
             0xE000..=0xFDFF => {
                 self.raw_memory[address as usize] = data;
                 self.raw_memory[address as usize - (0xE000 - 0xC000)] = data;
-            },
+            }
             0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
             DIV => self.raw_memory[DIV as usize] = 0,
             DMA => {
                 let source = little_endian::u16(0, data) as usize;
                 self.raw_memory.copy_within(source..source + 0xA0, OAM as usize);
-            },
-            BOOT_ROM_ENABLE_REGISTER=> {
-                self.is_boot_rom_enabled = data == 0;
-            },
-            _ => self.raw_memory[address as usize] = data,
+            }
+            BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
+            _ => self.raw_memory[address as usize] = data
         }
     }
 
