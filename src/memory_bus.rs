@@ -1,9 +1,8 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{MemoryAddress, OAM, DIV, DMA, BOOT_ROM_ENABLE_REGISTER};
+use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER, DIV, DMA, OAM};
 use crate::util::little_endian;
-use std::hint::unreachable_unchecked;
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
 // 4000-7FFF 16KB ROM Bank 01..NN (in cartridge, switchable bank number)
@@ -18,8 +17,7 @@ use std::hint::unreachable_unchecked;
 // FF80-FFFE High RAM (HRAM)
 // FFFF Interrupt Enable Register
 
-enum MemoryBankType
-{
+enum MemoryBankType {
     Local,
     MBC1 { is_4mbit: bool },
     MBC2,
@@ -44,7 +42,8 @@ impl MemoryBus {
 
         m[0..0x4000].copy_from_slice(&cartridge[0..0x4000]);
 
-        let file_path = std::env::current_dir().unwrap()
+        let file_path = std::env::current_dir()
+            .unwrap()
             .join(std::path::Path::new("src"))
             .join(std::path::Path::new("DMG_ROM.bin"));
 
@@ -96,18 +95,16 @@ impl MemoryBus {
                 self.should_enable_ram = match self.rom_type {
                     MemoryBankType::Local => false,
                     MemoryBankType::MBC1 { is_4mbit: false } => data & 0x0F == 0x0A,
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
             }
             0x2000..=0x3FFF => {
                 self.rom_bank = match self.rom_type {
                     MemoryBankType::Local => 1,
-                    MemoryBankType::MBC1 { is_4mbit: _ } => {
-                        match data {
-                            0..=1 => 1,
-                            _ => data & 0b0001_1111
-                        }
-                    }
+                    MemoryBankType::MBC1 { is_4mbit: _ } => match data {
+                        0..=1 => 1,
+                        _ => data & 0b0001_1111,
+                    },
                     MemoryBankType::MBC2 => {
                         // The least significant bit of the upper address
                         // byte must be zero to enable/disable cart RAM.
@@ -140,7 +137,7 @@ impl MemoryBus {
                             self.rom_bank |= (data & 0b11) << 6;
                         }
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
             }
             0x6000..=0x7FFF => {
@@ -148,9 +145,11 @@ impl MemoryBus {
                     MemoryBankType::MBC1 { is_4mbit: _ } => {
                         // 0: 16MBit ROM / 8KByte RAM
                         // 1: 4Mbit ROM / 32KByte RAM
-                        self.rom_type = MemoryBankType::MBC1 { is_4mbit: data & 0x01 == 0x01 };
+                        self.rom_type = MemoryBankType::MBC1 {
+                            is_4mbit: data & 0x01 == 0x01,
+                        };
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
             }
             0xA000..=0xBFFF => {
@@ -171,10 +170,11 @@ impl MemoryBus {
             DIV => self.raw_memory[DIV as usize] = 0,
             DMA => {
                 let source = little_endian::u16(0, data) as usize;
-                self.raw_memory.copy_within(source..source + 0xA0, OAM as usize);
+                self.raw_memory
+                    .copy_within(source..source + 0xA0, OAM as usize);
             }
             BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
-            _ => self.raw_memory[address as usize] = data
+            _ => self.raw_memory[address as usize] = data,
         }
     }
 

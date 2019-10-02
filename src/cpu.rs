@@ -1,7 +1,8 @@
-use crate::util::{little_endian, ith_bit};
+use crate::instructions::Instruction;
 use crate::instructions::Instruction::*;
 use crate::memory_bus::MemoryBus;
-use crate::instructions::Instruction;
+use crate::registers::{ConditionalFlag::*, Flags, Register, Register16bit, Registers};
+use crate::util::{ith_bit, little_endian};
 
 pub const VIDEO_WIDTH: u32 = 160;
 pub const VIDEO_HEIGHT: u32 = 144;
@@ -41,43 +42,10 @@ pub const BOOT_ROM_ENABLE_REGISTER: u16 = 0xFF50;
 
 pub type MemoryAddress = u16;
 
-enum TileType { Background, Window }
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Register { B, C, D, E, H, L, A, F }
-
-impl std::convert::From<u8> for Register {
-    fn from(n: u8) -> Register {
-        match n {
-            0 => Register::B,
-            1 => Register::C,
-            2 => Register::D,
-            3 => Register::E,
-            4 => Register::H,
-            5 => Register::L,
-            6 => Register::A,
-            7 => Register::F,
-            _ => unreachable!()
-        }
-    }
+enum TileType {
+    Background,
+    Window,
 }
-
-#[derive(Debug, Clone, Copy)]
-pub enum Register16bit {
-    BC = Register::B as isize,
-    DE = Register::D as isize,
-    HL = Register::H as isize,
-    AF = Register::A as isize,
-}
-
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum ConditionalFlag {
-    Zero = 7,
-    Subtract = 6,
-    HalfCarry = 5,
-    Carry = 4,
-}
-
 
 #[derive(PartialEq)]
 pub enum Lcd {
@@ -94,21 +62,20 @@ impl std::convert::From<u8> for Lcd {
             0b01 => Lcd::VBlank,
             0b10 => Lcd::SearchingRam,
             0b11 => Lcd::TransferringDataToDriver,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
 
 pub enum LcdControl {
-//Bit 7 - LCD Display Enable (0=Off, 1=On)
-//Bit 6 - Window Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
-//Bit 5 - Window Display Enable (0=Off, 1=On)
-//Bit 4 - BG & Window Tile Data Select (0=8800-97FF, 1=8000-8FFF)
-//Bit 3 - BG Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
-//Bit 2 - OBJ (Sprite) Size (0=8x8, 1=8x16)
-//Bit 1 - OBJ (Sprite) Display Enable (0=Off, 1=On)
-//Bit 0 - BG Display (for CGB see below) (0=Off, 1=On)
-
+    //Bit 7 - LCD Display Enable (0=Off, 1=On)
+    //Bit 6 - Window Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
+    //Bit 5 - Window Display Enable (0=Off, 1=On)
+    //Bit 4 - BG & Window Tile Data Select (0=8800-97FF, 1=8000-8FFF)
+    //Bit 3 - BG Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
+    //Bit 2 - OBJ (Sprite) Size (0=8x8, 1=8x16)
+    //Bit 1 - OBJ (Sprite) Display Enable (0=Off, 1=On)
+    //Bit 0 - BG Display (for CGB see below) (0=Off, 1=On)
     BackgroundEnable,
     ObjectEnable,
     ObjectSize,
@@ -136,13 +103,13 @@ impl std::convert::From<u8> for Interrupt {
             0b010 => Interrupt::Timer,
             0b011 => Interrupt::SerialTxComplete,
             0b100 => Interrupt::Joypad,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
 
 pub struct Cpu {
-    reg: [u8; 8],
+    reg: Registers,
     pc: MemoryAddress,
     mem: MemoryBus,
     sp: MemoryAddress,
@@ -155,17 +122,10 @@ pub struct Cpu {
     pub display: [u32; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
 }
 
-struct Flags {
-    z: bool,
-    n: bool,
-    h: bool,
-    c: bool,
-}
-
 impl Cpu {
     pub fn new(cartridge: &[u8]) -> Self {
         Cpu {
-            reg: [0x01, 0xB0, 0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D],
+            reg: Registers::new(),
             pc: 0x100,
             mem: MemoryBus::new(cartridge, false),
             sp: 0xFFFF,
@@ -183,8 +143,7 @@ impl Cpu {
         self.divider_counter += u16::from(cycles);
         if self.divider_counter >= 255 {
             self.divider_counter = 0;
-            let (val, _) = Cpu::add_8bit(self.mem.read(DIV), 1);
-            self.mem.write(DIV, val);
+            self.mem.write(DIV, self.mem.read(DIV).wrapping_add(1));
         }
 
         let is_clock_enabled = ith_bit(self.mem.read(TMC), 2);
@@ -204,8 +163,7 @@ impl Cpu {
                     self.mem.write(TIMA, self.mem.read(TMA));
                     self.request_interrupt(Interrupt::Timer);
                 } else {
-                    let (val, _) = Cpu::add_8bit(self.mem.read(TIMA), 1);
-                    self.mem.write(TIMA, val);
+                    self.mem.write(TIMA, self.mem.read(TIMA).wrapping_add(1));
                 }
             }
         }
@@ -269,7 +227,7 @@ impl Cpu {
                 }
 
                 if ith_bit(control, LcdControl::ObjectEnable as u8) {
-//                    self.render_sprites();
+                    //                    self.render_sprites();
                 }
             } else if line == 144 {
                 self.request_interrupt(Interrupt::VBlank);
@@ -291,16 +249,25 @@ impl Cpu {
             };
 
             // The Background Tile Map stores a 32x32 tile grid with corresponding tile numbers (one byte each).
-            let tile_num_base = if ith_bit(control, map_select_bit) { 0x9C00 } else { 0x9800 };
+            let tile_num_base = if ith_bit(control, map_select_bit) {
+                0x9C00
+            } else {
+                0x9800
+            };
             let tile_num_address = tile_num_base + row as u16 * 32 + col as u16;
 
-            let bg_tile_map = self.mem.raw_memory[tile_num_base as usize..tile_num_base as usize + 32 * 32].to_vec();
+            let _bg_tile_map = self.mem.raw_memory
+                [tile_num_base as usize..tile_num_base as usize + 32 * 32]
+                .to_vec();
 
             self.mem.read(tile_num_address)
         };
 
         // Tiles consist of 8x8 pixels. Each line of the tile occupies two bytes in memory (16 consecutive bytes total for any given tile).
-        let tile_address = if ith_bit(control, LcdControl::BackgroundAndWindodwTileDataSelect as u8) {
+        let tile_address = if ith_bit(
+            control,
+            LcdControl::BackgroundAndWindodwTileDataSelect as u8,
+        ) {
             let tile_num = get_tile_num(x, y) as u8;
             0x8000 + tile_num as u16 * 16
         } else {
@@ -308,7 +275,7 @@ impl Cpu {
             0x8800 + (tile_num as i16 + 128) as u16 * 16
         };
 
-        let tile_data = self.mem.raw_memory[0x8000..0x9000].to_vec();
+        let _tile_data = self.mem.raw_memory[0x8000..0x9000].to_vec();
 
         self.mem.read_word(tile_address + 2 * (y % 8) as u16)
     }
@@ -325,16 +292,14 @@ impl Cpu {
         let y_pos = if is_window_visible {
             line - window_y
         } else {
-            let (val, _) = Cpu::add_8bit(line, scroll_y);
-            val
+            line.wrapping_add(scroll_y)
         };
 
         for x in 0..VIDEO_WIDTH as u8 {
             let (x_pos, tile_type) = if is_window_visible && x >= window_x {
                 (x - window_x, TileType::Window)
             } else {
-                let (val, _) = Cpu::add_8bit(x, scroll_x);
-                (val, TileType::Background)
+                (x.wrapping_add(scroll_x), TileType::Background)
             };
 
             let (byte2, byte1) = little_endian::u8(self.get_tile_data(x_pos, y_pos, tile_type));
@@ -344,7 +309,8 @@ impl Cpu {
                 | ith_bit(byte1, colour_bit_num) as u8;
 
             let c = self.get_color(color_num, BGP) as u32;
-            self.display[line as usize * VIDEO_WIDTH as usize + x as usize] = (0xff << 24) | (c << 16) | (c << 8) | c;
+            self.display[line as usize * VIDEO_WIDTH as usize + x as usize] =
+                (0xff << 24) | (c << 16) | (c << 8) | c;
         }
     }
 
@@ -356,27 +322,36 @@ impl Cpu {
             2 => DARK_GRAY,
             1 => LIGHT_GRAY,
             0 => WHITE,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
     fn render_sprites(&mut self) {
         let control = self.mem.read(LCDC);
 
-        let y_size = if ith_bit(control, LcdControl::ObjectSize as u8) { 16 } else { 8 };
+        let y_size = if ith_bit(control, LcdControl::ObjectSize as u8) {
+            16
+        } else {
+            8
+        };
 
         // sprite occupies 4 bytes in the sprite attributes table
         const NUM_SPRITES: u16 = 40;
         for i in (0..4 * NUM_SPRITES as u16).step_by(4) {
             let (x_pos, y_pos) = (self.mem.read(OAM + i + 1) - 8, self.mem.read(OAM + i) - 16);
-            let (tile_location, attribute) = (self.mem.read(OAM + i + 2), self.mem.read(OAM + i + 3));
+            let (tile_location, attribute) =
+                (self.mem.read(OAM + i + 2), self.mem.read(OAM + i + 3));
             let (x_flip, y_flip) = (ith_bit(attribute, 5), ith_bit(attribute, 6));
 
             let scan_line = self.mem.read(LY);
 
             let does_sprite_intercept_line = scan_line >= y_pos && (scan_line < (y_pos + y_size));
             if does_sprite_intercept_line {
-                let line = 2 * if y_flip { -(scan_line as i16 - y_pos as i16 - y_size as i16) } else { scan_line as i16 - y_pos as i16 };
+                let line = 2 * if y_flip {
+                    -(scan_line as i16 - y_pos as i16 - y_size as i16)
+                } else {
+                    scan_line as i16 - y_pos as i16
+                };
 
                 let address = ((0x8000 + (tile_location as i32 * 16)) + line as i32) as u16;
                 let (data2, data1) = little_endian::u8(self.mem.read_word(address));
@@ -384,8 +359,8 @@ impl Cpu {
                 for pixel in 0..=7 {
                     let pixel_bit = if x_flip { pixel } else { 7 - pixel };
 
-                    let color_num = ((ith_bit(data2, pixel_bit) as u8) << 1)
-                        | ith_bit(data1, pixel_bit) as u8;
+                    let color_num =
+                        ((ith_bit(data2, pixel_bit) as u8) << 1) | ith_bit(data1, pixel_bit) as u8;
 
                     let color_address = if ith_bit(attribute, 4) { OBP1 } else { OBP0 };
 
@@ -393,7 +368,8 @@ impl Cpu {
 
                     // white is transparent
                     if c != (WHITE as u32) {
-                        self.display[line as usize * 160 + x_pos as usize + pixel as usize] = (0xff << 24) | (c << 16) | (c << 8) | c;
+                        self.display[line as usize * 160 + x_pos as usize + pixel as usize] =
+                            (0xff << 24) | (c << 16) | (c << 8) | c;
                     }
                 }
             }
@@ -415,7 +391,8 @@ impl Cpu {
             if ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
                 self.are_interrupts_enabled = false;
                 let not_requested_anymore = is_requested & !(1 << i);
-                self.mem.write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
+                self.mem
+                    .write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
 
                 self.sp -= 2;
                 self.mem.write_word(self.sp, self.pc);
@@ -440,17 +417,23 @@ impl Cpu {
 
             #[cfg(debug_assertions)]
                 {
-                    let v = self.mem.raw_memory[self.pc as usize..self.pc as usize + pc_increments as usize].to_vec();
+                    let v = self.mem.raw_memory
+                        [self.pc as usize..self.pc as usize + pc_increments as usize]
+                        .to_vec();
                     let tabs = match v.len() {
                         1 => "\t\t\t",
                         2 => "\t\t",
                         3 => "\t",
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     };
 
-                    let stack_data: u16 = if self.sp >= 0xffff { 0 } else { self.mem.read_word(self.sp) };
-                    println!("PC: {:4x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?}, {} regs: {:2x?}, \t {:08b}, \t LY: {:2x} \t {:x?}",
-                             self.pc, self.sp, stack_data, v, tabs, self.reg, self.reg[Register::F as usize], self.mem.read(LY), instruction);
+                    let stack_data: u16 = if self.sp >= 0xffff {
+                        0
+                    } else {
+                        self.mem.read_word(self.sp)
+                    };
+                    println!("PC: {:4x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?}, {}  \t LY: {:2x} \t {:x?}",
+                             self.pc, self.sp, stack_data, v, tabs, self.mem.read(LY), instruction);
                 }
 
             self.pc += pc_increments;
@@ -464,237 +447,328 @@ impl Cpu {
         total_cycles as usize
     }
 
-    fn write_word(&mut self, r: Register16bit, val: u16) {
-        self.reg[r as usize] = little_endian::msb(val);
-        self.reg[r as usize + 1] = little_endian::lsb(val);
+    fn alu_add16(&mut self, b: u16) {
+        let address = self.reg.read_word(Register16bit::HL);
+        let a = self.mem.read_word(address);
+        let r = a.wrapping_add(b);
+
+        self.reg.set_flags(Flags {
+            z: self.reg.get_flag(Zero),
+            n: false,
+            h: (a & 0x7FF) + (b & 0x7FF) > 0x7FF,
+            c: a > 0xFFFF - b,
+        });
+        self.mem.write_word(address, r);
     }
 
-    fn read_word(&self, r: Register16bit) -> u16 {
-        little_endian::u16(self.reg[r as usize + 1], self.reg[r as usize])
+    fn alu_add(&mut self, b: u8, use_carry: bool) {
+        let a = self.reg.read(Register::A);
+        let c = if use_carry { self.reg.get_flag(Carry) as u8 } else { 0 };
+        let r = a.wrapping_add(b).wrapping_add(c);
+        self.reg.write(Register::A, r);
+        self.reg.set_flags(Flags {
+            z: r == 0,
+            n: false,
+            h: (a & 0xF) + (b & 0xF) + c > 0xF,
+            c: a as u16 + b as u16 + c as u16 > 0xFF,
+        });
     }
 
-    fn write(&mut self, r: Register, val: u8) {
-        assert_ne!(r, Register::F);
-        self.reg[r as usize] = val;
+    fn alu_cmp(&mut self, b: u8) {
+        let a = self.reg.read(Register::A);
+        self.alu_sub(b, false);
+        self.reg.write(Register::A, a);
     }
 
-    fn read(&self, r: Register) -> u8 {
-        assert_ne!(r, Register::F);
-        self.reg[r as usize]
+    fn alu_sub(&mut self, b: u8, use_carry: bool) -> u8 {
+        let a = self.reg.read(Register::A);
+        let c = if use_carry { self.reg.get_flag(Carry) as u8 } else { 0 };
+        let r = a.wrapping_sub(b).wrapping_sub(c);
+        self.reg.set_flags(Flags {
+            z: r == 0,
+            n: true,
+            h: (a & 0x0F) < (b & 0x0F) + c,
+            c: (a as u16) < (b as u16) + (c as u16),
+        });
+        r
     }
 
-    fn set_flag(&mut self, flag: ConditionalFlag, state: bool) {
-        let val = if state {
-            self.reg[Register::F as usize] | (1 << flag as u8)
+    fn alu_and(&mut self, b: u8) {
+        let a = self.reg.read(Register::A);
+        self.reg.write(Register::A, a & b);
+        self.reg.set_flags(Flags {
+            z: self.reg.read(Register::A) == 0,
+            n: false,
+            h: true,
+            c: false,
+        });
+    }
+
+    fn alu_or(&mut self, b: u8) {
+        let a = self.reg.read(Register::A);
+        self.reg.write(Register::A, a | b);
+        self.reg.set_flags(Flags {
+            z: self.reg.read(Register::A) == 0,
+            n: false,
+            h: false,
+            c: false,
+        });
+    }
+
+    fn alu_xor(&mut self, b: u8) {
+        let a = self.reg.read(Register::A);
+        self.reg.write(Register::A, a ^ b);
+        self.reg.set_flags(Flags {
+            z: self.reg.read(Register::A) == 0,
+            n: false,
+            h: false,
+            c: false,
+        });
+    }
+
+    fn alu_inc(&mut self, a: u8) -> u8 {
+        let r = a.wrapping_add(1);
+        self.reg.set_flags(Flags {
+            z: r == 0,
+            n: false,
+            h: (a & 0xF) + 1 > 0xF,
+            c: self.reg.get_flag(Carry),
+        });
+        r
+    }
+
+    fn alu_dec(&mut self, a: u8) -> u8 {
+        let r = a.wrapping_sub(1);
+        self.reg.set_flags(Flags {
+            z: r == 0,
+            n: true,
+            h: a & 0xF == 0,
+            c: self.reg.get_flag(Carry),
+        });
+        r
+    }
+
+    fn alu_rotate_left(&mut self, x: u8, use_carry: bool) -> u8 {
+        let c = if use_carry { self.reg.get_flag(Carry) } else { ith_bit(x, 7) };
+        let r = (x << 1) | c as u8;
+        self.reg.set_flags(Flags {
+            z: false,
+            n: false,
+            h: false,
+            c: ith_bit(x, 7),
+        });
+        r
+    }
+
+    fn alu_rotate_right(&mut self, x: u8, use_carry: bool) -> u8 {
+        let c = if use_carry { self.reg.get_flag(Carry) } else { ith_bit(x, 0) };
+        let r = (x >> 1) | ((c as u8) << 7);
+        self.reg.set_flags(Flags {
+            z: false,
+            n: false,
+            h: false,
+            c: ith_bit(x, 0),
+        });
+        r
+    }
+
+    fn alu_shift_left(&mut self, x: u8) -> u8 {
+        let carry = ith_bit(x, 7);
+        let r = x << 1;
+        self.reg.set_flags(Flags {
+            z: r == 0,
+            n: false,
+            h: false,
+            c: carry,
+        });
+        r
+    }
+
+    fn alu_shift_right(&mut self, x: u8, is_arithmatic: bool) -> u8 {
+        let carry = ith_bit(x, 0);
+        let sign_bit = if is_arithmatic { ith_bit(x, 7) as u8 } else { 0 };
+        let r = (x >> 1) | ((sign_bit as u8) << 7);
+        self.reg.set_flags(Flags {
+            z: r == 0,
+            n: false,
+            h: false,
+            c: carry,
+        });
+        r
+    }
+
+    fn alu_swap_nibbles(&mut self, x: u8) -> u8 {
+        let r = (x << 4) | (x >> 4);
+        self.reg.set_flags(Flags {
+            z: r == 0,
+            n: false,
+            h: false,
+            c: false,
+        });
+        r
+    }
+
+    fn alu_test_bit(&mut self, x: u8, bit: u8) {
+        self.reg.set_flags(Flags {
+            z: !ith_bit(x, bit),
+            n: false,
+            h: true,
+            c: self.reg.get_flag(Carry),
+        });
+    }
+
+    fn alu_daa(&mut self) {
+        let mut a = self.reg.read(Register::A);
+        let mut adjust = if self.reg.get_flag(Carry) { 0x60 } else { 0x00 };
+        if self.reg.get_flag(HalfCarry) { adjust |= 0x06; };
+        if !self.reg.get_flag(Subtract) {
+            if a & 0x0F > 0x09 { adjust |= 0x06; };
+            if a > 0x99 { adjust |= 0x60; };
+            a = a.wrapping_add(adjust);
         } else {
-            self.reg[Register::F as usize] & !(1 << flag as u8)
-        };
-        self.reg[Register::F as usize] = val;
-    }
+            a = a.wrapping_sub(adjust);
+        }
 
-
-    fn get_flag(&self, flag: ConditionalFlag) -> bool {
-        ith_bit(self.reg[Register::F as usize], flag as u8)
-    }
-
-    fn set_flags(&mut self, flags: Flags) {
-        self.set_flag(ConditionalFlag::Zero, flags.z);
-        self.set_flag(ConditionalFlag::Subtract, flags.n);
-        self.set_flag(ConditionalFlag::HalfCarry, flags.h);
-        self.set_flag(ConditionalFlag::Carry, flags.c);
-    }
-
-    fn add_16bit(a: u16, b: u16) -> (u16, Flags) {
-        let res = a as u32 + b as u32;
-        (
-            res as u16,
-            Flags {
-                z: (res as u16) == 0,
-                n: false,
-                h: ((a as u32 ^ b as u32 ^ res) & 0x1000) == 0x1000,
-                c: res > 0xFFFF,
-            },
-        )
-    }
-
-    fn sub_16bit(a: u16, b: u16) -> (u16, Flags) {
-        let res = a as i32 - b as i32;
-        (
-            res as u16,
-            Flags {
-                z: (res as u16) == 0,
-                n: true,
-                h: ((a as i32 ^ -(b as i32) ^ res) & 0x1000) == 0x1000,
-                c: res < 0,
-            },
-        )
-    }
-
-    fn add_8bit(a: u8, b: u8) -> (u8, Flags) {
-        let res = a as u16 + b as u16;
-        (
-            res as u8,
-            Flags {
-                z: (res as u8) == 0,
-                n: false,
-                h: ((a as u16 ^ b as u16 ^ res) & 0x0010) == 0x0010,
-                c: res > 0xFF,
-            },
-        )
-    }
-
-    fn sub_8bit(a: u8, b: u8) -> (u8, Flags) {
-        let res = a as i16 - b as i16;
-        (
-            res as u8,
-            Flags {
-                z: (res as u8) == 0,
-                n: true,
-                h: ((a as i16 ^ -(b as i16) ^ res) & 0x0010) == 0x0010,
-                c: res < 0,
-            },
-        )
+        self.reg.set_flag(Carry, adjust >= 0x60);
+        self.reg.set_flag(HalfCarry, false);
+        self.reg.set_flag(Zero, a == 0);
+        self.reg.write(Register::A, a);
     }
 
     fn execute_instruction(&mut self, instr: Instruction) -> u8 {
-        let rotate_left = |x| ((x << 1) | ith_bit(x, 7) as u8, ith_bit(x, 7));
-        let rotate_left_carry = |x| ((x << 1) | self.get_flag(ConditionalFlag::Carry) as u8, ith_bit(x, 7));
-
-        let rotate_right = |x| ((x >> 1) | ((ith_bit(x, 0) as u8) << 7), ith_bit(x, 0), );
-        let rotate_right_carry = |x| ((x >> 1) | ((self.get_flag(ConditionalFlag::Carry) as u8) << 7), ith_bit(x, 0), );
-
         match instr {
             // GMB 8bit-Load commands
             // ld   r,r         xx         4 ---- r=r
             LoadReg { to, from } => {
-                self.write(to, self.read(from));
+                self.reg.write(to, self.reg.read(from));
                 4
             }
             // ld   r,n         xx nn      8 ---- r=n
             LoadRegWithConstant { to, n } => {
-                self.write(to, n);
+                self.reg.write(to, n);
                 8
             }
             // ld   r,(HL)      xx         8 ---- r=(HL)
             LoadRegWithMemoryHL { to } => {
-                let address = self.read_word(Register16bit::HL);
-                self.write(to, self.mem.read(address));
+                let address = self.reg.read_word(Register16bit::HL);
+                self.reg.write(to, self.mem.read(address));
                 8
             }
             // ld   (HL),r      7x         8 ---- (HL)=r
             LoadMemoryHLwithRegister { from } => {
-                let address = self.read_word(Register16bit::HL);
-                self.mem.write(address, self.read(from));
+                let address = self.reg.read_word(Register16bit::HL);
+                self.mem.write(address, self.reg.read(from));
                 8
             }
             // ld   (HL),n      36 nn     12 ----
             LoadMemoryHLwithConstant { n } => {
-                let address = self.read_word(Register16bit::HL);
+                let address = self.reg.read_word(Register16bit::HL);
                 self.mem.write(address, n);
                 12
             }
             // ld   A,(BC)      0A         8 ----
             LoadAwithValBC => {
-                let address = self.read_word(Register16bit::BC);
-                self.write(Register::A, self.mem.read(address));
+                let address = self.reg.read_word(Register16bit::BC);
+                self.reg.write(Register::A, self.mem.read(address));
                 8
             }
             // ld   A,(DE)      1A         8 ----
             LoadAwithValDE => {
-                let address = self.read_word(Register16bit::DE);
-                self.write(Register::A, self.mem.read(address));
+                let address = self.reg.read_word(Register16bit::DE);
+                self.reg.write(Register::A, self.mem.read(address));
                 8
             }
             // ld   A,(nn)      FA        16 ----
             LoadAwithMemory { nn } => {
                 assert!(nn < 0xFFFF);
-                self.write(Register::A, self.mem.read(nn));
+                self.reg.write(Register::A, self.mem.read(nn));
                 16
             }
             // ld   (BC),A      02         8 ----
             LoadMemoryBCwithA => {
-                let address = self.read_word(Register16bit::BC);
-                self.mem.write(address, self.read(Register::A));
+                let address = self.reg.read_word(Register16bit::BC);
+                self.mem.write(address, self.reg.read(Register::A));
                 8
             }
             // ld   (DE),A      12         8 ----
             LoadMemoryDEwithA => {
-                let address = self.read_word(Register16bit::DE);
-                self.mem.write(address, self.read(Register::A));
+                let address = self.reg.read_word(Register16bit::DE);
+                self.mem.write(address, self.reg.read(Register::A));
                 8
             }
             // ld   (nn),A      EA        16 ----
             LoadMemoryNNwithA { nn } => {
-                self.mem.write(nn, self.read(Register::A));
+                self.mem.write(nn, self.reg.read(Register::A));
                 16
             }
             // ld   A,(FF00+n)  F0 nn     12 ---- read from io-port n (memory FF00+n)
             LoadAwithFF00plusN { n } => {
-                self.write(Register::A, self.mem.read(u16::from(n) + 0xFF00));
+                self.reg
+                    .write(Register::A, self.mem.read(u16::from(n) + 0xFF00));
                 12
             }
             // ld   (FF00+n),A  E0 nn     12 ---- write to io-port n (memory FF00+n)
             LoadMemoryFF00plusNwithA { nn } => {
                 self.mem
-                    .write(u16::from(nn) + 0xFF00, self.read(Register::A));
+                    .write(u16::from(nn) + 0xFF00, self.reg.read(Register::A));
                 12
             }
             // ld   A,(FF00+C)  F2         8 ---- read from io-port C (memory FF00+C)
             LoadAwithFF00plusC => {
-                let address = 0xFF00 + u16::from(self.read(Register::C));
-                self.write(Register::A, self.mem.read(address));
+                let address = 0xFF00 + u16::from(self.reg.read(Register::C));
+                self.reg.write(Register::A, self.mem.read(address));
                 8
             }
             // ld   (FF00+C),A  E2         8 ---- write to io-port C (memory FF00+C)
             LoadMemoryFF00plusCwithA => {
-                let address = 0xFF00 + u16::from(self.read(Register::C));
-                self.mem.write(address, self.read(Register::A));
+                let address = 0xFF00 + u16::from(self.reg.read(Register::C));
+                self.mem.write(address, self.reg.read(Register::A));
 
                 8
             }
             // ldi  (HL),A      22         8 ---- (HL)=A, HL=HL+1
             LoadMemoryHLwithAandIncr => {
-                let address = self.read_word(Register16bit::HL);
-                self.mem.write(address, self.read(Register::A));
+                let address = self.reg.read_word(Register16bit::HL);
+                self.mem.write(address, self.reg.read(Register::A));
 
-                self.write_word(Register16bit::HL, address + 1);
+                self.reg.write_word(Register16bit::HL, address + 1);
                 8
             }
             // ldi  A,(HL)      2A         8 ---- A=(HL), HL=HL+1
             LoadAwithValHLandIncr => {
-                let address = self.read_word(Register16bit::HL);
+                let address = self.reg.read_word(Register16bit::HL);
                 let val = self.mem.read(address);
 
-                self.write(Register::A, val);
+                self.reg.write(Register::A, val);
 
-                self.write_word(Register16bit::HL, address + 1);
+                self.reg.write_word(Register16bit::HL, address + 1);
                 8
             }
             // ldd  (HL),A      32         8 ---- (HL)=A, HL=HL-1
             LoadMemoryHLwithAandDecr => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.read(Register::A);
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.reg.read(Register::A);
 
                 self.mem.write(address, val);
 
-                self.write_word(Register16bit::HL, address - 1);
+                self.reg.write_word(Register16bit::HL, address - 1);
                 8
             }
             // ldd  A,(HL)      3A         8 ---- A=(HL), HL=HL-1
             LoadAwithValHLandDecr => {
-                let address = self.read_word(Register16bit::HL);
+                let address = self.reg.read_word(Register16bit::HL);
                 let val = self.mem.read(address);
 
-                self.write(Register::A, val);
+                self.reg.write(Register::A, val);
 
-                self.write_word(Register16bit::HL, address - 1);
+                self.reg.write_word(Register16bit::HL, address - 1);
                 8
             }
 
             // GMB 16bit-Load Commands
             // ld   rr,nn       x1 nn nn  12 ---- rr=nn (rr may be BC,DE,HL or SP)
             LoadRegWith16BitConstant { rr, nn } => {
-                self.write_word(rr, nn);
+                self.reg.write_word(rr, nn);
 
                 12
             }
@@ -705,13 +779,13 @@ impl Cpu {
             }
             // ld   SP,HL       F9         8 ---- SP=HL
             LoadSPwithHL => {
-                self.sp = self.read_word(Register16bit::HL);
+                self.sp = self.reg.read_word(Register16bit::HL);
                 8
             }
             // push rr          x5 (c5, d5, e5, f5)        16 ---- SP=SP-2  (SP)=rr   (rr may be BC,DE,HL,AF)
             Push { rr } => {
                 self.sp -= 2;
-                let val = self.read_word(rr);
+                let val = self.reg.read_word(rr);
                 self.mem.write_word(self.sp, val);
 
                 16
@@ -719,7 +793,7 @@ impl Cpu {
             // pop  rr          x1 (c1, d1, e1, f1)      12 (AF) rr=(SP)  SP=SP+2   (rr may be BC,DE,HL,AF)
             Pop { rr } => {
                 let val = self.mem.read_word(self.sp);
-                self.write_word(rr, val);
+                self.reg.write_word(rr, val);
                 self.sp += 2;
                 12
             }
@@ -727,289 +801,156 @@ impl Cpu {
             // GMB 8bit-Arithmetic/logical Commands
             //  add  A,r         8x         4 z0hc A=A+r
             AddRegister { r } => {
-                let (val, f) = Cpu::add_8bit(self.read(Register::A), self.read(r));
-
-                self.write(Register::A, val);
-                self.set_flags(f);
+                self.alu_add(self.reg.read(r), false);
                 4
             }
             //  add  A,n         C6 nn      8 z0hc A=A+n
             AddConstant { n } => {
-                let (val, f) = Cpu::add_8bit(self.read(Register::A), n);
-
-                self.write(Register::A, val);
-                self.set_flags(f);
+                self.alu_add(n, false);
                 8
             }
             //  add  A,(HL)      86         8 z0hc A=A+(HL)
             AddMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                let (val, f) =
-                    Cpu::add_8bit(self.read(Register::A), self.mem.read(address));
-
-                self.write(Register::A, val);
-                self.set_flags(f);
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_add(self.mem.read(address), false);
                 8
             }
             //  adc  A,r         8x         4 z0hc A=A+r+cy
             AddRegisterWithCarry { r } => {
-                let (b, f_b) = Cpu::add_8bit(self.read(r), self.get_flag(ConditionalFlag::Carry) as u8);
-                let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
-
-                self.write(Register::A, val);
-                self.set_flags(Flags { z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c });
+                self.alu_add(self.reg.read(r), true);
                 4
             }
             //  adc  A,n         CE nn      8 z0hc A=A+n+cy
             AddConstantWithCarry { n } => {
-                let (b, f_b) = Cpu::add_8bit(n, self.get_flag(ConditionalFlag::Carry) as u8);
-                let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
-
-                self.write(Register::A, val);
-                self.set_flags(Flags { z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c });
+                self.alu_add(n, true);
                 8
             }
             //  adc  A,(HL)      8E         8 z0hc A=A+(HL)+cy
             AddMemoryHLWithCarry => {
-                let address = self.read_word(Register16bit::HL);
-                let (b, f_b) = Cpu::add_8bit(self.mem.read(address), self.get_flag(ConditionalFlag::Carry) as u8);
-                let (val, f) = Cpu::add_8bit(self.read(Register::A), b);
-
-                self.write(Register::A, val);
-                self.set_flags(Flags { z: f.z, n: false, h: f_b.h || f.h, c: f_b.c || f.c });
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_add(self.mem.read(address), true);
                 8
             }
             //  sub  r           9x         4 z1hc A=A-r
             SubtractRegister { r } => {
-                let val = self.read(r);
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), val);
-                self.write(Register::A, val);
-                self.set_flags(f);
+                self.alu_sub(self.reg.read(r), false);
                 4
             }
             //  sub  n           D6 nn      8 z1hc A=A-n
             SubtractConstant { n } => {
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), n);
-                self.write(Register::A, val);
-                self.set_flags(f);
+                self.alu_sub(n, false);
                 8
             }
             //  sub  (HL)        96         8 z1hc A=A-(HL)
             SubtractMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), val);
-                self.write(Register::A, val);
-                self.set_flags(f);
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_sub(self.mem.read(address), false);
                 8
             }
             //  sbc  A,r         9x         4 z1hc A=A-r-cy
             SubtractRegisterWithCarry { r } => {
-                let (b, f_b) = Cpu::sub_8bit(self.read(r), self.get_flag(ConditionalFlag::Carry) as u8);
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
-
-                self.write(Register::A, val);
-                self.set_flags(Flags { z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c });
+                self.alu_sub(self.reg.read(r), true);
                 4
             }
             //  sbc  A,n         DE nn      8 z1hc A=A-n-cy
             SubtractConstantWithCarry { n } => {
-                let (b, f_b) = Cpu::sub_8bit(n, self.get_flag(ConditionalFlag::Carry) as u8);
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
-
-                self.write(Register::A, val);
-                self.set_flags(Flags { z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c });
+                self.alu_sub(n, true);
                 4
             }
             //  sbc  A,(HL)      9E         8 z1hc A=A-(HL)-cy
             SubtractMemoryHLWithCarry => {
-                let address = self.read_word(Register16bit::HL);
-                let (b, f_b) = Cpu::sub_8bit(self.mem.read(address), self.get_flag(ConditionalFlag::Carry) as u8);
-                let (val, f) = Cpu::sub_8bit(self.read(Register::A), b);
-
-                self.write(Register::A, val);
-                self.set_flags(Flags { z: f.z, n: true, h: f_b.h || f.h, c: f_b.c || f.c });
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_sub(self.mem.read(address), true);
                 8
             }
             //  and  r           Ax         4 z010 A=A & r
             AndRegister { r } => {
-                self.write(Register::A, self.read(Register::A) & self.read(r));
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: true,
-                    c: false,
-                });
+                self.alu_and(self.reg.read(r));
                 4
             }
             //  and  n           E6 nn      8 z010 A=A & n
             AndConstant { n } => {
-                self.write(Register::A, self.read(Register::A) & n);
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: true,
-                    c: false,
-                });
+                self.alu_and(n);
                 8
             }
             //  and  (HL)        A6         8 z010 A=A & (HL)
             AndMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                self.write(Register::A, self.read(Register::A) & self.mem.read(address));
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: true,
-                    c: false,
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_and(self.mem.read(address));
                 8
             }
             //  xor  r           Ax         4 z000
             XorRegister { r } => {
-                self.write(Register::A, self.read(Register::A) ^ self.read(r));
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                self.alu_xor(self.reg.read(r));
                 4
             }
             //  xor  n           EE nn      8 z000
             XorConstant { n } => {
-                self.write(Register::A, self.read(Register::A) ^ n);
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                self.alu_xor(n);
                 8
             }
             //  xor  (HL)        AE         8 z000
             XorMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                self.write(Register::A, self.read(Register::A) ^ self.mem.read(address));
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_xor(self.mem.read(address));
                 8
             }
             //  or   r           Bx         4 z000 A=A | r
             OrRegister { r } => {
-                self.write(Register::A, self.read(Register::A) | self.read(r));
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                self.alu_or(self.reg.read(r));
                 8
             }
             //  or   n           F6 nn      8 z000 A=A | n
             OrConstant { n } => {
-                self.write(Register::A, self.read(Register::A) | n);
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                self.alu_or(n);
                 8
             }
             //  or   (HL)        B6         8 z000 A=A | (HL)
             OrMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                self.write(Register::A, self.read(Register::A) | self.mem.read(address));
-                self.set_flags(Flags {
-                    z: self.read(Register::A) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_or(self.mem.read(address));
                 8
             }
             //  cp   r           Bx         4 z1hc compare A-r
             CompareRegister { r } => {
-                let (_, f) = Cpu::sub_8bit(self.read(Register::A), self.read(r));
-                self.set_flags(f);
+                self.alu_cmp(self.reg.read(r));
                 4
             }
             //  cp   n           FE nn      8 z1hc compare A-n
             CompareConstant { n } => {
-                let (_, f) = Cpu::sub_8bit(self.read(Register::A), n);
-                self.set_flags(f);
+                self.alu_cmp(n);
                 8
             }
             //  cp   (HL)        BE         8 z1hc compare A-(HL)
             CompareMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let (_, f) = Cpu::sub_8bit(self.read(Register::A), val);
-
-                self.set_flags(f);
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_cmp(self.mem.read(address));
                 8
             }
             //  inc  r           xx         4 z0h- r=r+1
             IncrementRegister { r } => {
-                let val = self.read(r);
-                let (val, f) = Cpu::add_8bit(val, 1);
-
-                self.write(r, val);
-                self.set_flags(Flags {
-                    z: f.z,
-                    n: false,
-                    h: f.h,
-                    c: self.get_flag(ConditionalFlag::Carry),
-                });
+                let val= self.alu_inc(self.reg.read(r));
+                self.reg.write(r, val);
                 4
             }
             //  inc  (HL)        34        12 z0h- (HL)=(HL)+1
             IncrementMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let (val, f) = Cpu::add_8bit(val, 1);
-
-                self.mem.write(address, val);
-                self.set_flags(Flags {
-                    z: f.z,
-                    n: false,
-                    h: f.h,
-                    c: self.get_flag(ConditionalFlag::Carry),
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.alu_inc(self.mem.read(address));
+                self.mem .write(address, val);
                 12
             }
             //  dec  r           xx         4 z1h- r=r-1
             DecrementRegister { r } => {
-                let val = self.read(r);
-                let (val, f) = Cpu::sub_8bit(val, 1);
-
-                self.write(r, val);
-                self.set_flags(Flags {
-                    z: f.z,
-                    n: true,
-                    h: f.h,
-                    c: self.get_flag(ConditionalFlag::Carry),
-                });
+                let val = self.alu_dec(self.reg.read(r));
+                self.reg.write(r, val);
                 4
             }
             //  dec  (HL)        35        12 z1h- (HL)=(HL)-1
             DecrementMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let (val, f) = Cpu::sub_8bit(val, 1);
-
-                self.mem.write(address, val);
-                self.set_flags(Flags {
-                    z: f.z,
-                    n: true,
-                    h: f.h,
-                    c: self.get_flag(ConditionalFlag::Carry),
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.alu_dec(self.mem.read(address));
+                self.mem .write(address, val);
                 12
             }
             //  daa              27         4 z-0x decimal adjust akku
@@ -1018,81 +959,31 @@ impl Cpu {
                 // These flags are (rarely) used for the DAA instruction only, N Indicates whether the previous instruction has been an addition or subtraction, and H indicates carry for lower 4bits of the result, also for DAA, the C flag must indicate carry for upper 8bits.
                 // After adding/subtracting two BCD numbers, DAA is intended to convert the result into BCD format; BCD numbers are ranged from 00h to 99h rather than 00h to FFh.
                 // Because C and H flags must contain carry-outs for each digit, DAA cannot be used for 16bit operations (which have 4 digits), or for INC/DEC operations (which do not affect C-flag).
-
-                // TODO: Do we need to set all flags?
-                // note: assumes a is a uint8_t and wraps from 0xff to 0
-                let val = self.read(Register::A);
-                let s = self.get_flag(ConditionalFlag::Subtract);
-
-                if !self.get_flag(ConditionalFlag::Subtract) {
-                    // after an addition, adjust if (half-)carry occurred or if result is out of bounds
-                    if self.get_flag(ConditionalFlag::Carry) || (val > 0x99) {
-                        let (val, f) = Cpu::add_8bit(val, 0x60);
-                        self.write(Register::A, val);
-                        self.set_flags(f);
-                    }
-                    if self.get_flag(ConditionalFlag::HalfCarry) || (val & 0x0f) > 0x09 {
-                        let (val, f) = Cpu::add_8bit(val, 0x6);
-                        self.write(Register::A, val);
-                        self.set_flags(f);
-                    }
-                } else {
-                    // after a subtraction, only adjust if (half-)carry occurred
-                    if self.get_flag(ConditionalFlag::Carry) {
-                        let (val, f) = Cpu::sub_8bit(val, 0x60);
-                        self.write(Register::A, val);
-                        self.set_flags(f);
-                    }
-                    if self.get_flag(ConditionalFlag::HalfCarry) {
-                        let (val, f) = Cpu::sub_8bit(val, 0x6);
-                        self.write(Register::A, val);
-                        self.set_flags(f);
-                    }
-                }
-
-                self.set_flag(ConditionalFlag::HalfCarry, false);
-                self.set_flag(ConditionalFlag::Subtract, s);
+                self.alu_daa();
                 4
             }
             //  cpl              2F         4 -11- A = A xor FF
             CPL => {
                 // Complement all bits
-                self.write(Register::A, self.read(Register::A) ^ 0xFF);
-                self.set_flag(ConditionalFlag::Subtract, true);
-                self.set_flag(ConditionalFlag::HalfCarry, true);
+                self.reg.write(Register::A, self.reg.read(Register::A) ^ 0xFF);
+                self.reg.set_flag(Subtract, true);
+                self.reg.set_flag(HalfCarry, true);
                 4
             }
 
             //GMB 16bit-Arithmetic/logical Commands
             //add  HL,rr     x9           8 -0hc HL = HL+rr     ;rr may be BC,DE,HL,SP
             AddRegisterHL16bit { r } => {
-                let address = self.read_word(Register16bit::HL);
-                let (val, f) = Cpu::add_16bit(address, self.read_word(r));
-                self.write_word(Register16bit::HL, val);
-                self.set_flags(Flags {
-                    z: self.get_flag(ConditionalFlag::Zero),
-                    n: false,
-                    h: f.h,
-                    c: f.c,
-                });
+                self.alu_add16(self.reg.read_word(r));
                 8
             }
             AddRegisterSPtoHL16bit {} => {
-                let address = self.read_word(Register16bit::HL);
-                let (val, f) = Cpu::add_16bit(address, self.sp);
-                self.write_word(Register16bit::HL, val);
-                self.set_flags(Flags {
-                    z: self.get_flag(ConditionalFlag::Zero),
-                    n: false,
-                    h: f.h,
-                    c: f.c,
-                });
+                self.alu_add16(self.sp);
                 8
             }
             //inc  rr        x3           8 ---- rr = rr+1      ;rr may be BC,DE,HL,SP
             IncrementRegister16bit { r } => {
-                let (val, _) = Cpu::add_16bit(self.read_word(r), 1);
-                self.write_word(r, val);
+                self.reg.write_word(r, self.reg.read_word(r).wrapping_add(1));
                 8
             }
             IncrementSP {} => {
@@ -1101,8 +992,7 @@ impl Cpu {
             }
             //dec  rr        xB           8 ---- rr = rr-1      ;rr may be BC,DE,HL,SP
             DecrementRegister16bit { r } => {
-                let (val, _) = Cpu::sub_16bit(self.read_word(r), 1);
-                self.write_word(r, val);
+                self.reg.write_word(r, self.reg.read_word(r).wrapping_sub(1));
                 8
             }
             DecrementSP {} => {
@@ -1111,366 +1001,178 @@ impl Cpu {
             }
             //add  SP,dd     E8          16 00hc SP = SP +/- dd ;dd is 8bit signed number
             AddSP { d } => {
-                let (val, f) = if d > 0 {
-                    Cpu::add_16bit(self.sp, d as u16)
-                } else {
-                    Cpu::sub_16bit(self.sp, d.abs() as u16)
-                };
-                self.sp = val;
-                self.set_flags(Flags {
+                let b = d as i16 as u16; // 2s compliment
+                self.reg.set_flags(Flags {
                     z: false,
                     n: false,
-                    h: f.h,
-                    c: f.c,
+                    h: self.sp & 0xF + b & 0xF > 0xF,
+                    c: self.sp & 0xFF + b & 0xFF > 0xFF,
                 });
+                self.sp = self.sp.wrapping_add(b);
                 16
             }
             //ld   HL,SP+dd  F8          12 00hc HL = SP +/- dd ;dd is 8bit signed number
             LoadHLwithSPplus { d } => {
-                let (val, f) = if d > 0 {
-                    Cpu::add_16bit(self.sp, d as u16)
-                } else {
-                    Cpu::sub_16bit(self.sp, d.abs() as u16)
-                };
-                self.write_word(Register16bit::HL, val);
-                self.set_flags(Flags {
+                let address = self.reg.read_word(Register16bit::HL);
+                let v = self.mem.read(address);
+                let b = d as i16 as u16; // 2s compliment
+                self.reg.set_flags(Flags {
                     z: false,
                     n: false,
-                    h: f.h,
-                    c: f.c,
+                    h: self.sp & 0xF + b & 0xF > 0xF,
+                    c: self.sp & 0xFF + b & 0xFF > 0xFF,
                 });
                 12
             }
 
             //GMB Rotate- und Shift-Commands
             //rlca           07           4 000c rotate akku left
-            RotateLeft {} => {
-                let (val, carry) = rotate_left(self.read(Register::A));
-                self.write(Register::A, val);
-                self.set_flags(Flags {
-                    z: false,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                4
-            }
             //rla            17           4 000c rotate akku left through carry
-            RotateLeftThroughCarry {} => {
-                let (val, carry) = rotate_left_carry(self.read(Register::A));
-                self.write(Register::A, val);
-                self.set_flags(Flags {
-                    z: false,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            RotateLeft { use_carry } => {
+                let val = self.alu_rotate_left(self.reg.read(Register::A), use_carry);
+                self.reg.write( Register::A, val);
                 4
             }
             //rrca           0F           4 000c rotate akku right
-            RotateRight => {
-                let (val, carry) = rotate_right(self.read(Register::A));
-                self.write(Register::A, val);
-                self.set_flags(Flags {
-                    z: false,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                4
-            }
             //rra            1F           4 000c rotate akku right through carry
-            RotateRightThroughCarry => {
-                let (val, carry) = rotate_right_carry(self.read(Register::A));
-                self.write(Register::A, val);
-                self.set_flags(Flags {
-                    z: false,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            RotateRight { use_carry } => {
+                let val = self.alu_rotate_right(self.reg.read(Register::A), use_carry);
+                self.reg.write( Register::A, val );
                 4
             }
             //rlc  r         CB 0x        8 z00c rotate left
-            RotateLeftRegisterThroughCarry { r } => {
-                let (val, carry) = rotate_left(self.read(r));
-                self.write(r, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            //rl   r         CB 1x        8 z00c rotate left
+            RotateLeftRegister { r, use_carry } => {
+                let val = self.alu_rotate_left(self.reg.read(r), use_carry);
+                self.reg .write(r, val);
+                self.reg.set_flag(Zero, self.reg.read(r) == 0);
                 4
             }
             //rlc  (HL)      CB 06       16 z00c rotate left
-            RotateLeftHLThroughCarry => {
-                let address = self.read_word(Register16bit::HL);
-                let (val, carry) = rotate_left_carry(self.mem.read(address));
-                self.mem.write(address, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                4
-            }
             //rrc  r         CB 0x        8 z00c rotate right
-            RotateRightRegisterThroughCarry { r } => {
-                let (val, carry) = rotate_right(self.read(r));
-                self.write(r, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            RotateRightRegister { r, use_carry } => {
+                let val = self.alu_rotate_right(self.reg.read(r), use_carry);
+                self.reg .write(r, val);
+                self.reg.set_flag(Zero, self.reg.read(r) == 0);
                 8
             }
             //rrc  (HL)      CB 0E       16 z00c rotate right through carry
-            RotateRightHLThroughCarry => {
-                let address = self.read_word(Register16bit::HL);
-                let (val, carry) = rotate_right_carry(self.mem.read(address));
-                self.mem.write(address, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                8
-            }
-            //rl   r         CB 1x        8 z00c rotate left
-            RotateLeftRegister { r } => {
-                let (val, carry) = rotate_left(self.read(r));
-                self.write(r, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                8
-            }
             //rl   (HL)      CB 16       16 z00c rotate left
-            RotateLeftHL => {
-                let address = self.read_word(Register16bit::HL);
-                let (val, carry) = rotate_left(self.mem.read(address));
-                self.mem.write(address, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            RotateLeftHL { use_carry } => {
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.alu_rotate_left(self.mem.read(address), use_carry);
+                self.mem.write( address, val, );
+                self.reg.set_flag(Zero, self.mem.read(address) == 0);
                 16
             }
             //rr   r         CB 1x        8 z00c rotate right
-            RotateRightRegister { r } => {
-                let (val, carry) = rotate_right(self.read(r));
-                self.write(r, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                4
-            }
             //rr   (HL)      CB 1E       16 z00c rotate right
-            RotateRightHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let (val, carry) = rotate_right(val);
-                self.mem.write(address, val);
-                self.set_flags(Flags {
-                    z: val == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            RotateRightHL { use_carry } => {
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.alu_rotate_right(self.mem.read(address), use_carry);
+                self.mem.write( address, val, );
+                self.reg.set_flag(Zero, self.mem.read(address) == 0);
                 16
             }
             //sla  r         CB 2x        8 z00c shift left arithmetic (b0=0)
             ShiftLeftRegister { r } => {
-                let carry = ith_bit(self.read(r), 7);
-                self.write(r, self.read(r) << 1);
-                self.set_flags(Flags {
-                    z: self.read(r) == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+                let val = self.alu_shift_left(self.reg.read(r));
+                self.reg.write(r, val);
                 8
             }
             //sla  (HL)      CB 26       16 z00c shift left arithmetic (b0=0)
             ShiftLeftHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let carry = ith_bit(val, 7);
-                self.mem.write(address, val << 1);
-                self.set_flags(Flags {
-                    z: self.mem.read(address) == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.alu_shift_left(self.mem.read(address));
+                self.mem .write(address, val);
                 8
             }
             //sra  r         CB 2x        8 z00c shift right arithmetic (b7=b7)
-            ShiftRightArithmeticRegister { r } => {
-                let carry = ith_bit(self.read(r), 0);
-                let sign_bit = ith_bit(self.read(r), 7);
-                self.write(r, (self.read(r) >> 1) | ((sign_bit as u8) << 7));
-                self.set_flags(Flags {
-                    z: self.read(r) == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            //srl  r         CB 3x        8 z00c shift right logical (b7=0)
+            ShiftRightRegister { r, is_arithmetic } => {
+                let val = self.alu_shift_right(self.reg.read(r), is_arithmetic);
+                self.reg.write(r, val);
                 8
             }
             //sra  (HL)      CB 2E       16 z00c shift right arithmetic (b7=b7)
-            ShiftRightArithmeticHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let carry = ith_bit(val, 0);
-                let sign_bit = ith_bit(val, 7);
-                self.mem.write(address, (val >> 1) | ((sign_bit as u8) << 7));
-                self.set_flags(Flags {
-                    z: self.mem.read(address) == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
+            //srl  (HL)      CB 3E       16 z00c shift right logical (b7=0)
+            ShiftRightHL { is_arithmetic } => {
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.alu_shift_right(self.mem.read(address), is_arithmetic);
+                self.mem.write(address, val);
                 16
             }
             //swap r         CB 3x        8 z000 exchange low/hi-nibble
             SwapRegister { r } => {
-                self.write(r, (self.read(r) << 4) | (self.read(r) >> 4));
-                self.set_flags(Flags {
-                    z: self.read(r) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                let val = self.alu_swap_nibbles(self.reg.read(r));
+                self.reg.write(r, val);
                 8
             }
             //swap (HL)      CB 36       16 z000 exchange low/hi-nibble
             SwapHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                self.mem.write(address, (val << 4) | (val >> 4));
-                self.set_flags(Flags {
-                    z: self.mem.read(address) == 0,
-                    n: false,
-                    h: false,
-                    c: false,
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.alu_swap_nibbles(self.mem.read(address));
+                self.mem.write(address, val);
                 16
-            }
-            //srl  r         CB 3x        8 z00c shift right logical (b7=0)
-            ShiftRightLogicalRegister { r } => {
-                let carry = ith_bit(self.read(r), 0);
-                self.write(r, self.read(r) >> 1);
-                self.set_flags(Flags {
-                    z: self.read(r) == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                8
-            }
-            //srl  (HL)      CB 3E       16 z00c shift right logical (b7=0)
-            ShiftRightLogicalHL => {
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                let carry = ith_bit(val, 0);
-                self.mem.write(address, val >> 1);
-                self.set_flags(Flags {
-                    z: self.mem.read(address) == 0,
-                    n: false,
-                    h: false,
-                    c: carry,
-                });
-                8
             }
             //GMB Singlebit Operation Commands
             //bit  n,r       CB xx        8 z01- test bit n
             TestBitRegister { bit, r } => {
                 assert!(bit <= 7);
-                self.set_flags(Flags {
-                    z: !ith_bit(self.read(r), bit),
-                    n: false,
-                    h: true,
-                    c: self.get_flag(ConditionalFlag::Carry),
-                });
+                self.alu_test_bit(self.reg.read(r), bit);
                 8
             }
             //bit  n,(HL)    CB xx       12 z01- test bit n
             TestBitMemoryHL { bit } => {
                 assert!(bit <= 7);
-                let address = self.read_word(Register16bit::HL);
-                self.set_flags(Flags {
-                    z: !ith_bit(self.mem.read(address), bit),
-                    n: false,
-                    h: true,
-                    c: self.get_flag(ConditionalFlag::Carry),
-                });
+                let address = self.reg.read_word(Register16bit::HL);
+                self.alu_test_bit(self.mem.read(address), bit);
                 12
             }
             //set  n,r       CB xx        8 ---- set bit n
             SetBitRegister { bit, r } => {
                 assert!(bit <= 7);
-                self.write(r, self.read(r) | 1 << bit);
-                assert!(ith_bit(self.read(r), bit));
+                self.reg.write(r, self.reg.read(r) | 1 << bit);
+                assert!(ith_bit(self.reg.read(r), bit));
                 8
             }
             //set  n,(HL)    CB xx       16 ---- set bit n
             SetBitMemoryHL { bit } => {
                 assert!(bit <= 7);
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                self.mem.write(address, val | (1 << bit));
+                let address = self.reg.read_word(Register16bit::HL);
+                self.mem.write(address, self.mem.read(address) | (1 << bit));
                 assert!(ith_bit(self.mem.read(address), bit));
                 16
             }
             //res  n,r       CB xx        8 ---- reset bit n
             ResetBitRegister { bit, r } => {
                 assert!(bit <= 7);
-                self.write(r, self.read(r) & !(1 << bit));
-                assert!(!ith_bit(self.read(r), bit));
+                self.reg.write(r, self.reg.read(r) & !(1 << bit));
+                assert!(!ith_bit(self.reg.read(r), bit));
                 8
             }
             //res  n,(HL)    CB xx       16 ---- reset bit n
             ResetBitMemoryHL { bit } => {
                 assert!(bit <= 7);
-                let address = self.read_word(Register16bit::HL);
-                let val = self.mem.read(address);
-                self.mem.write(address, val & !(1 << bit));
+                let address = self.reg.read_word(Register16bit::HL);
+                let val = self.mem.read(address) & !(1 << bit);
+                self.mem .write(address, val);
                 assert!(!ith_bit(self.mem.read(address), bit));
                 16
             }
             //GMB CPU-Control Commands
             //ccf            3F           4 -00c cy=cy xor 1
             CCF => {
-                self.set_flags(Flags {
-                    z: self.get_flag(ConditionalFlag::Zero),
-                    n: false,
-                    h: false,
-                    c: !self.get_flag(ConditionalFlag::Carry),
-                });
+                self.reg.set_flag(Subtract, false);
+                self.reg.set_flag(HalfCarry, false);
+                self.reg.set_flag(Carry, !self.reg.get_flag(Carry));
                 4
             }
             //scf            37           4 -001 cy=1
             SCF => {
-                self.set_flags(Flags {
-                    z: self.get_flag(ConditionalFlag::Zero),
-                    n: false,
-                    h: false,
-                    c: true,
-                });
+                self.reg.set_flag(Subtract, false);
+                self.reg.set_flag(HalfCarry, false);
+                self.reg.set_flag(Carry, true);
                 4
             }
             //nop            00           4 ---- no operation
@@ -1503,14 +1205,18 @@ impl Cpu {
             }
             //jp   HL        E9           4 ---- jump to HL, PC=HL
             JPtoMemoryHL => {
-                let address = self.read_word(Register16bit::HL);
+                let address = self.reg.read_word(Register16bit::HL);
                 self.pc = address;
                 4
             }
             //jp   f,nn      xx nn nn 16;12 ---- conditional jump if nz,z,nc,c
-            CondJP { flag, check_state, nn } => {
-                assert!(flag == ConditionalFlag::Zero || flag == ConditionalFlag::Carry);
-                if self.get_flag(flag) == check_state {
+            CondJP {
+                flag,
+                check_state,
+                nn,
+            } => {
+                assert!(flag == Zero || flag == Carry);
+                if self.reg.get_flag(flag) == check_state {
                     self.pc = nn;
                     16
                 } else {
@@ -1523,9 +1229,13 @@ impl Cpu {
                 12
             }
             //jr   f,PC+dd   xx dd     12;8 ---- conditional relative jump if nz,z,nc,c
-            CondJR { flag, check_state, dd } => {
-                assert!(flag == ConditionalFlag::Zero || flag == ConditionalFlag::Carry);
-                if self.get_flag(flag) == check_state {
+            CondJR {
+                flag,
+                check_state,
+                dd,
+            } => {
+                assert!(flag == Zero || flag == Carry);
+                if self.reg.get_flag(flag) == check_state {
                     self.pc = (i32::from(self.pc) + i32::from(dd)) as u16;
                     12
                 } else {
@@ -1540,9 +1250,13 @@ impl Cpu {
                 24
             }
             //call f,nn      xx nn nn 24;12 ---- conditional call if nz,z,nc,c
-            CondCALL { flag, check_state, nn } => {
-                assert!(flag == ConditionalFlag::Zero || flag == ConditionalFlag::Carry);
-                if self.get_flag(flag) == check_state {
+            CondCALL {
+                flag,
+                check_state,
+                nn,
+            } => {
+                assert!(flag == Zero || flag == Carry);
+                if self.reg.get_flag(flag) == check_state {
                     self.sp -= 2;
                     self.mem.write_word(self.sp, self.pc);
                     self.pc = nn;
@@ -1559,8 +1273,8 @@ impl Cpu {
             }
             //ret  f         xx        20;8 ---- conditional return if nz,z,nc,c
             CondRET { flag, check_state } => {
-                assert!(flag == ConditionalFlag::Zero || flag == ConditionalFlag::Carry);
-                if self.get_flag(flag) == check_state {
+                assert!(flag == Zero || flag == Carry);
+                if self.reg.get_flag(flag) == check_state {
                     self.pc = self.mem.read_word(self.sp);
                     self.sp += 2;
                     20
@@ -2080,56 +1794,84 @@ impl Cpu {
 
             //GMB Rotate- und Shift-Commands
             //rlca           07           4 000c rotate akku left
-            0x07 => (RotateLeft, 1),
+            0x07 => (RotateLeft { use_carry: false }, 1),
             //rla            17           4 000c rotate akku left through carry
-            0x17 => (RotateLeftThroughCarry, 1),
+            0x17 => (RotateLeft { use_carry: true }, 1),
             //rrca           0F           4 000c rotate akku right
-            0x0F => (RotateRight, 1),
+            0x0F => (RotateRight { use_carry: false }, 1),
             //rra            1F           4 000c rotate akku right through carry
-            0x1F => (RotateRightThroughCarry, 1),
+            0x1F => (RotateRight { use_carry: false }, 1),
             0xCB => {
                 let op = self.mem.read(self.pc + 1);
                 match op {
                     //rlc  r         CB 0x        8 z00c rotate left
                     //rlc  (HL)      CB 06       16 z00c rotate left
                     0x00..=0x05 => (
-                        RotateLeftRegisterThroughCarry {
+                        RotateLeftRegister {
                             r: Register::from(op & 0b0111),
+                            use_carry: true,
                         },
                         2,
                     ),
-                    0x06 => (RotateLeftHLThroughCarry, 2),
-                    0x07 => (RotateLeftRegisterThroughCarry { r: Register::A }, 2),
+                    0x06 => (RotateLeftHL { use_carry: true }, 2),
+                    0x07 => (
+                        RotateLeftRegister {
+                            r: Register::A,
+                            use_carry: true,
+                        },
+                        2,
+                    ),
                     //rrc  r         CB 0x        8 z00c rotate right
                     //rrc  (HL)      CB 0E       16 z00c rotate right
                     0x08..=0x0D => (
-                        RotateRightRegisterThroughCarry {
+                        RotateRightRegister {
                             r: Register::from(op & 0b0111),
+                            use_carry: true,
                         },
                         2,
                     ),
-                    0x0E => (RotateRightHLThroughCarry, 2),
-                    0x0F => (RotateRightRegisterThroughCarry { r: Register::A }, 2),
+                    0x0E => (RotateRightHL { use_carry: true }, 2),
+                    0x0F => (
+                        RotateRightRegister {
+                            r: Register::A,
+                            use_carry: true,
+                        },
+                        2,
+                    ),
                     //rl   r         CB 1x        8 z00c rotate left through carry
                     //rl   (HL)      CB 16       16 z00c rotate left through carry
                     0x10..=0x15 => (
                         RotateLeftRegister {
                             r: Register::from(op & 0b0111),
+                            use_carry: false,
                         },
                         2,
                     ),
-                    0x16 => (RotateLeftHL, 2),
-                    0x17 => (RotateLeftRegister { r: Register::A }, 2),
+                    0x16 => (RotateLeftHL { use_carry: false }, 2),
+                    0x17 => (
+                        RotateLeftRegister {
+                            r: Register::A,
+                            use_carry: false,
+                        },
+                        2,
+                    ),
                     //rr   r         CB 1x        8 z00c rotate right through carry
                     //rr   (HL)      CB 1E       16 z00c rotate right through carry
                     0x18..=0x1D => (
                         RotateRightRegister {
                             r: Register::from(op & 0b0111),
+                            use_carry: false,
                         },
                         2,
                     ),
-                    0x1E => (RotateRightHL, 2),
-                    0x1F => (RotateRightRegister { r: Register::A }, 2),
+                    0x1E => (RotateRightHL { use_carry: false }, 2),
+                    0x1F => (
+                        RotateRightRegister {
+                            r: Register::A,
+                            use_carry: false,
+                        },
+                        2,
+                    ),
                     //sla  r         CB 2x        8 z00c shift left arithmetic (b0=0)
                     //sla  (HL)      CB 26       16 z00c shift left arithmetic (b0=0)
                     0x20..=0x25 => (
@@ -2143,13 +1885,14 @@ impl Cpu {
                     //sra  r         CB 2x        8 z00c shift right arithmetic (b7=b7)
                     //sra  (HL)      CB 2E       16 z00c shift right arithmetic (b7=b7)
                     0x28..=0x2D => (
-                        ShiftRightArithmeticRegister {
+                        ShiftRightRegister {
                             r: Register::from(op & 0b0111),
+                            is_arithmetic: true
                         },
                         2,
                     ),
-                    0x2E => (ShiftRightArithmeticHL, 2),
-                    0x2F => (ShiftRightArithmeticRegister { r: Register::A }, 2),
+                    0x2E => (ShiftRightHL { is_arithmetic: true }, 2),
+                    0x2F => (ShiftRightRegister { r: Register::A, is_arithmetic: true }, 2),
                     //swap r         CB 3x        8 z000 exchange low/hi-nibble
                     //swap (HL)      CB 36       16 z000 exchange low/hi-nibble
                     0x30..=0x35 => (
@@ -2163,13 +1906,14 @@ impl Cpu {
                     //srl  r         CB 3x        8 z00c shift right logical (b7=0)
                     //srl  (HL)      CB 3E       16 z00c shift right logical (b7=0)
                     0x38..=0x3D => (
-                        ShiftRightLogicalRegister {
+                        ShiftRightRegister {
                             r: Register::from(op & 0b0111),
+                            is_arithmetic: false,
                         },
                         2,
                     ),
-                    0x3E => (ShiftRightLogicalHL, 2),
-                    0x3F => (ShiftRightLogicalRegister { r: Register::A }, 2),
+                    0x3E => (ShiftRightHL { is_arithmetic: false }, 2),
+                    0x3F => (ShiftRightRegister { r: Register::A, is_arithmetic: false }, 2),
 
                     //GMB Singlebit Operation Commands
                     //bit  n,r       CB xx        8 z01- test bit n
@@ -2571,7 +2315,7 @@ impl Cpu {
             //jp   f,nn      xx nn nn 16;12 ---- conditional jump if nz,z,nc,c
             0xC2 => (
                 CondJP {
-                    flag: ConditionalFlag::Zero,
+                    flag: Zero,
                     check_state: false,
                     nn: immediate_u16(),
                 },
@@ -2579,7 +2323,7 @@ impl Cpu {
             ),
             0xCA => (
                 CondJP {
-                    flag: ConditionalFlag::Zero,
+                    flag: Zero,
                     check_state: true,
                     nn: immediate_u16(),
                 },
@@ -2587,7 +2331,7 @@ impl Cpu {
             ),
             0xD2 => (
                 CondJP {
-                    flag: ConditionalFlag::Carry,
+                    flag: Carry,
                     check_state: false,
                     nn: immediate_u16(),
                 },
@@ -2595,7 +2339,7 @@ impl Cpu {
             ),
             0xDA => (
                 CondJP {
-                    flag: ConditionalFlag::Carry,
+                    flag: Carry,
                     check_state: true,
                     nn: immediate_u16(),
                 },
@@ -2606,7 +2350,7 @@ impl Cpu {
             //jr   f,PC+dd   xx dd     12;8 ---- conditional relative jump if nz,z,nc,c
             0x20 => (
                 CondJR {
-                    flag: ConditionalFlag::Zero,
+                    flag: Zero,
                     check_state: false,
                     dd: immediate_i8(),
                 },
@@ -2614,7 +2358,7 @@ impl Cpu {
             ),
             0x28 => (
                 CondJR {
-                    flag: ConditionalFlag::Zero,
+                    flag: Zero,
                     check_state: true,
                     dd: immediate_i8(),
                 },
@@ -2622,7 +2366,7 @@ impl Cpu {
             ),
             0x30 => (
                 CondJR {
-                    flag: ConditionalFlag::Carry,
+                    flag: Carry,
                     check_state: false,
                     dd: immediate_i8(),
                 },
@@ -2630,7 +2374,7 @@ impl Cpu {
             ),
             0x38 => (
                 CondJR {
-                    flag: ConditionalFlag::Carry,
+                    flag: Carry,
                     check_state: true,
                     dd: immediate_i8(),
                 },
@@ -2646,7 +2390,7 @@ impl Cpu {
             //call f,nn      xx nn nn 24;12 ---- conditional call if nz,z,nc,c
             0xC4 => (
                 CondCALL {
-                    flag: ConditionalFlag::Zero,
+                    flag: Zero,
                     check_state: false,
                     nn: immediate_u16(),
                 },
@@ -2654,7 +2398,7 @@ impl Cpu {
             ),
             0xCC => (
                 CondCALL {
-                    flag: ConditionalFlag::Zero,
+                    flag: Zero,
                     check_state: true,
                     nn: immediate_u16(),
                 },
@@ -2662,7 +2406,7 @@ impl Cpu {
             ),
             0xD4 => (
                 CondCALL {
-                    flag: ConditionalFlag::Carry,
+                    flag: Carry,
                     check_state: false,
                     nn: immediate_u16(),
                 },
@@ -2670,7 +2414,7 @@ impl Cpu {
             ),
             0xDC => (
                 CondCALL {
-                    flag: ConditionalFlag::Carry,
+                    flag: Carry,
                     check_state: true,
                     nn: immediate_u16(),
                 },
@@ -2679,10 +2423,34 @@ impl Cpu {
             //ret            C9          16 ---- return, PC=(SP), SP=SP+2
             0xC9 => (RET, 1),
             //ret  f         xx        20;8 ---- conditional return if nz,z,nc,c
-            0xC0 => (CondRET { flag: ConditionalFlag::Zero, check_state: false }, 1),
-            0xC8 => (CondRET { flag: ConditionalFlag::Zero, check_state: true }, 1),
-            0xD0 => (CondRET { flag: ConditionalFlag::Carry, check_state: false }, 1),
-            0xD8 => (CondRET { flag: ConditionalFlag::Carry, check_state: true }, 1),
+            0xC0 => (
+                CondRET {
+                    flag: Zero,
+                    check_state: false,
+                },
+                1,
+            ),
+            0xC8 => (
+                CondRET {
+                    flag: Zero,
+                    check_state: true,
+                },
+                1,
+            ),
+            0xD0 => (
+                CondRET {
+                    flag: Carry,
+                    check_state: false,
+                },
+                1,
+            ),
+            0xD8 => (
+                CondRET {
+                    flag: Carry,
+                    check_state: true,
+                },
+                1,
+            ),
             //reti           D9          16 ---- return and enable interrupts (IME=1)
             0xD9 => (RETI, 1),
             //rst  n         xx          16 ---- call to 00,08,10,18,20,28,30,38
@@ -2697,5 +2465,41 @@ impl Cpu {
             0x08 => (LoadAddressWithSP { n: immediate_u16() }, 3),
             _ => panic!("pc: {:x?}, op: {:x?}", self.pc, op),
         }
+    }
+}
+
+#[cfg(test)]
+mod test
+{
+    use crate::cpu::Cpu;
+
+    #[test]
+    fn alu()
+    {
+        unimplemented!();
+    }
+
+    #[test]
+    fn alu_16()
+    {
+        unimplemented!();
+    }
+
+    #[test]
+    fn jumps()
+    {
+        unimplemented!();
+    }
+
+    #[test]
+    fn memory()
+    {
+        unimplemented!();
+    }
+
+    #[test]
+    fn compare()
+    {
+        unimplemented!();
     }
 }

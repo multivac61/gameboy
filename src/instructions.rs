@@ -1,4 +1,5 @@
-use crate::cpu::{Register, Register16bit, MemoryAddress, ConditionalFlag};
+use crate::cpu::{MemoryAddress};
+use crate::registers::{ConditionalFlag, Register, Register16bit};
 
 #[derive(Debug)]
 pub enum Instruction {
@@ -139,45 +140,37 @@ pub enum Instruction {
 
     //GMB Rotate- und Shift-Commands
     //rlca           07           4 000c rotate akku left
-    RotateLeft,
     //rla            17           4 000c rotate akku left through carry
-    RotateLeftThroughCarry,
+    RotateLeft { use_carry: bool },
     //rrca           0F           4 000c rotate akku right
-    RotateRight,
     //rra            1F           4 000c rotate akku right through carry
-    RotateRightThroughCarry,
+    RotateRight { use_carry: bool },
     //rlc  r         CB 0x        8 z00c rotate left
-    RotateLeftRegisterThroughCarry { r: Register },
-    //rlc  (HL)      CB 06       16 z00c rotate left
-    RotateLeftHLThroughCarry,
-    //rrc  r         CB 0x        8 z00c rotate right
-    RotateRightRegisterThroughCarry { r: Register },
-    //rrc  (HL)      CB 0E       16 z00c rotate right
-    RotateRightHLThroughCarry,
     //rl   r         CB 1x        8 z00c rotate left through carry
-    RotateLeftRegister { r: Register },
+    RotateLeftRegister { r: Register, use_carry: bool },
     //rl   (HL)      CB 16       16 z00c rotate left through carry
-    RotateLeftHL,
+    //rlc  (HL)      CB 06       16 z00c rotate left
+    RotateLeftHL { use_carry: bool },
+    //rrc  r         CB 0x        8 z00c rotate right
     //rr   r         CB 1x        8 z00c rotate right through carry
-    RotateRightRegister { r: Register },
+    RotateRightRegister { r: Register, use_carry: bool },
     //rr   (HL)      CB 1E       16 z00c rotate right through carry
-    RotateRightHL,
+    //rrc  (HL)      CB 0E       16 z00c rotate right
+    RotateRightHL { use_carry: bool },
     //sla  r         CB 2x        8 z00c shift left arithmetic (b0=0)
     ShiftLeftRegister { r: Register },
     //sla  (HL)      CB 26       16 z00c shift left arithmetic (b0=0)
     ShiftLeftHL,
     //sra  r         CB 2x        8 z00c shift right arithmetic (b7=b7)
-    ShiftRightArithmeticRegister { r: Register },
+    //srl  r         CB 3x        8 z00c shift right logical (b7=0)
+    ShiftRightRegister { r: Register, is_arithmetic: bool },
     //sra  (HL)      CB 2E       16 z00c shift right arithmetic (b7=b7)
-    ShiftRightArithmeticHL,
+    //srl  (HL)      CB 3E       16 z00c shift right logical (b7=0)
+    ShiftRightHL { is_arithmetic: bool },
     //swap r         CB 3x        8 z000 exchange low/hi-nibble
     SwapRegister { r: Register },
     //swap (HL)      CB 36       16 z000 exchange low/hi-nibble
     SwapHL,
-    //srl  r         CB 3x        8 z00c shift right logical (b7=0)
-    ShiftRightLogicalRegister { r: Register },
-    //srl  (HL)      CB 3E       16 z00c shift right logical (b7=0)
-    ShiftRightLogicalHL,
 
     //GMB Singlebit Operation Commands
     //bit  n,r       CB xx        8 z01- test bit n

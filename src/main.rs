@@ -1,15 +1,15 @@
 use std::fs::File;
 use std::io::Read;
-use std::time::*;
 use std::thread::sleep;
+use std::time::*;
 
-//use piston_window::*;
 use minifb::{Key, Window, WindowOptions};
 
+mod cpu;
 mod instructions;
 mod memory_bus;
-mod cpu;
 mod util;
+mod registers;
 
 const ONE_SECOND_IN_MICROS: usize = 1000000000;
 const ONE_SECOND_IN_CYCLES: usize = 4190000;
@@ -20,17 +20,18 @@ const ENLARGEMENT_FACTOR: usize = 1;
 const WINDOW_DIMENSIONS: [usize; 2] = [(160 * ENLARGEMENT_FACTOR), (144 * ENLARGEMENT_FACTOR)];
 
 fn main() {
-    let file_path = std::env::current_dir() .unwrap()
-//        .join(std::path::Path::new("src"))
-//        .join(std::path::Path::new("Tetris.gb"));
-        .join(std::path::Path::new(".."))
-        .join(std::path::Path::new("gb-test-roms"))
-        .join(std::path::Path::new("cpu_instrs"))
-        .join(std::path::Path::new("individual"))
-        .join(std::path::Path::new("06-ld r,r.gb"));
-//        .join(std::path::Path::new("04-op r,imm.gb"));
+    let file_path = std::env::current_dir()
+        .unwrap()
+                .join(std::path::Path::new("src"))
+                .join(std::path::Path::new("Tetris.gb"));
+//        .join(std::path::Path::new(".."))
+//        .join(std::path::Path::new("gb-test-roms"))
+//        .join(std::path::Path::new("cpu_instrs"))
+//        .join(std::path::Path::new("individual"))
+//        .join(std::path::Path::new("06-ld r,r.gb"));
+    //        .join(std::path::Path::new("04-op r,imm.gb"));
 
-//    let file_path = std::path::Path::new("/home/dingari/vblank_stat_intr-C.gb");
+    //    let file_path = std::path::Path::new("/home/dingari/vblank_stat_intr-C.gb");
 
     println!("{:?}", file_path);
     let mut file = File::open(file_path).expect("There was an issue opening the file");
@@ -45,7 +46,7 @@ fn main() {
         WINDOW_DIMENSIONS[1],
         WindowOptions::default(),
     )
-        .unwrap();
+    .unwrap();
 
     let mut framebuffer = vec![0u32; WINDOW_DIMENSIONS[0] * WINDOW_DIMENSIONS[1]];
     let mut cycles_elapsed_in_frame = 0usize;

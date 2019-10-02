@@ -20,4 +20,3 @@ pub fn ith_bit(n: u8, i: u8) -> bool {
     assert!(i <= 7);
     n & (1 << i) == (1 << i)
 }
-
