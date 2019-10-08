@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER, DIV, DMA, OAM};
+use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER, DIV, DMA, OAM, TIMA, TAC};
 use crate::util::little_endian;
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
@@ -167,12 +167,14 @@ impl MemoryBus {
                 self.raw_memory[address as usize - (0xE000 - 0xC000)] = data;
             }
             0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
+            0xFF01 => print!("{}", data as char),
             DIV => self.raw_memory[DIV as usize] = 0,
             DMA => {
                 let source = little_endian::u16(0, data) as usize;
                 self.raw_memory
                     .copy_within(source..source + 0xA0, OAM as usize);
-            }
+            },
+            TIMA => panic!("wrote TIMA"),
             BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
             _ => self.raw_memory[address as usize] = data,
         }

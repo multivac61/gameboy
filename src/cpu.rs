@@ -12,9 +12,9 @@ const CLOCK_FREQUENCY: f64 = 4_194_304.0;
 pub const OAM: u16 = 0xFE00;
 
 pub const DIV: u16 = 0xFF04;
-const TIMA: u16 = 0xFF05;
-const TMA: u16 = 0xFF06;
-const TMC: u16 = 0xFF07;
+pub const TIMA: u16 = 0xFF05;
+pub const TMA: u16 = 0xFF06;
+pub const TAC: u16 = 0xFF07;
 
 const LCDC: u16 = 0xFF40;
 const STAT: u16 = 0xFF41;
@@ -146,7 +146,7 @@ impl Cpu {
             self.mem.write(DIV, self.mem.read(DIV).wrapping_add(1));
         }
 
-        let is_clock_enabled = ith_bit(self.mem.read(TMC), 2);
+        let is_clock_enabled = ith_bit(self.mem.read(TAC), 2);
         if is_clock_enabled {
             self.timer_counter -= i64::from(cycles);
 
@@ -413,6 +413,7 @@ impl Cpu {
         let mut cur_num_cycles = 0;
 
         while cur_num_cycles < total_cycles && !self.is_halted {
+//            let (instruction, pc_increments) = if !self.is_halted { self.fetch_instruction() } else { (NOP, 0) };
             let (instruction, pc_increments) = self.fetch_instruction();
 
             #[cfg(debug_assertions)]
@@ -421,6 +422,7 @@ impl Cpu {
                         [self.pc as usize..self.pc as usize + pc_increments as usize]
                         .to_vec();
                     let tabs = match v.len() {
+                        0 => "",
                         1 => "\t\t\t",
                         2 => "\t\t",
                         3 => "\t",
@@ -432,10 +434,13 @@ impl Cpu {
                     } else {
                         self.mem.read_word(self.sp)
                     };
-                    println!("PC: {:4x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?}, {}  \t LY: {:2x} \t {:x?}",
-                             self.pc, self.sp, stack_data, v, tabs, self.mem.read(LY), instruction);
+                    println!("PC: {:4x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
+                             self.pc, self.sp, stack_data, v, tabs, self.reg, self.mem.read(LY), instruction);
                 }
 
+            if self.pc == 0xc7d2 {
+                panic!();
+            }
             self.pc += pc_increments;
             let cycles = self.execute_instruction(instruction);
             cur_num_cycles += u64::from(cycles);
@@ -484,6 +489,7 @@ impl Cpu {
         let a = self.reg.read(Register::A);
         let c = if use_carry { self.reg.get_flag(Carry) as u8 } else { 0 };
         let r = a.wrapping_sub(b).wrapping_sub(c);
+        self.reg.write(Register::A, r);
         self.reg.set_flags(Flags {
             z: r == 0,
             n: true,
@@ -784,17 +790,25 @@ impl Cpu {
             }
             // push rr          x5 (c5, d5, e5, f5)        16 ---- SP=SP-2  (SP)=rr   (rr may be BC,DE,HL,AF)
             Push { rr } => {
-                self.sp -= 2;
-                let val = self.reg.read_word(rr);
-                self.mem.write_word(self.sp, val);
+                let value = self.reg.read_word(rr);
+
+                self.sp = self.sp.wrapping_sub(1);
+                self.mem.write(self.sp, ((value & 0xFF00) >> 8) as u8);
+
+                self.sp = self.sp.wrapping_sub(1);
+                self.mem.write(self.sp, (value & 0xFF) as u8);
 
                 16
             }
             // pop  rr          x1 (c1, d1, e1, f1)      12 (AF) rr=(SP)  SP=SP+2   (rr may be BC,DE,HL,AF)
             Pop { rr } => {
-                let val = self.mem.read_word(self.sp);
-                self.reg.write_word(rr, val);
-                self.sp += 2;
+                let lsb = self.mem.read(self.sp) as u16;
+                self.sp = self.sp.wrapping_add(1);
+
+                let msb = self.mem.read(self.sp) as u16;
+                self.sp = self.sp.wrapping_add(1);
+
+                self.reg.write_word(rr, (msb << 8) | lsb);
                 12
             }
 
@@ -929,7 +943,7 @@ impl Cpu {
             }
             //  inc  r           xx         4 z0h- r=r+1
             IncrementRegister { r } => {
-                let val= self.alu_inc(self.reg.read(r));
+                let val = self.alu_inc(self.reg.read(r));
                 self.reg.write(r, val);
                 4
             }
@@ -937,7 +951,7 @@ impl Cpu {
             IncrementMemoryHL => {
                 let address = self.reg.read_word(Register16bit::HL);
                 let val = self.alu_inc(self.mem.read(address));
-                self.mem .write(address, val);
+                self.mem.write(address, val);
                 12
             }
             //  dec  r           xx         4 z1h- r=r-1
@@ -950,7 +964,7 @@ impl Cpu {
             DecrementMemoryHL => {
                 let address = self.reg.read_word(Register16bit::HL);
                 let val = self.alu_dec(self.mem.read(address));
-                self.mem .write(address, val);
+                self.mem.write(address, val);
                 12
             }
             //  daa              27         4 z-0x decimal adjust akku
@@ -1030,21 +1044,21 @@ impl Cpu {
             //rla            17           4 000c rotate akku left through carry
             RotateLeft { use_carry } => {
                 let val = self.alu_rotate_left(self.reg.read(Register::A), use_carry);
-                self.reg.write( Register::A, val);
+                self.reg.write(Register::A, val);
                 4
             }
             //rrca           0F           4 000c rotate akku right
             //rra            1F           4 000c rotate akku right through carry
             RotateRight { use_carry } => {
                 let val = self.alu_rotate_right(self.reg.read(Register::A), use_carry);
-                self.reg.write( Register::A, val );
+                self.reg.write(Register::A, val);
                 4
             }
             //rlc  r         CB 0x        8 z00c rotate left
             //rl   r         CB 1x        8 z00c rotate left
             RotateLeftRegister { r, use_carry } => {
                 let val = self.alu_rotate_left(self.reg.read(r), use_carry);
-                self.reg .write(r, val);
+                self.reg.write(r, val);
                 self.reg.set_flag(Zero, self.reg.read(r) == 0);
                 4
             }
@@ -1052,7 +1066,7 @@ impl Cpu {
             //rrc  r         CB 0x        8 z00c rotate right
             RotateRightRegister { r, use_carry } => {
                 let val = self.alu_rotate_right(self.reg.read(r), use_carry);
-                self.reg .write(r, val);
+                self.reg.write(r, val);
                 self.reg.set_flag(Zero, self.reg.read(r) == 0);
                 8
             }
@@ -1061,7 +1075,7 @@ impl Cpu {
             RotateLeftHL { use_carry } => {
                 let address = self.reg.read_word(Register16bit::HL);
                 let val = self.alu_rotate_left(self.mem.read(address), use_carry);
-                self.mem.write( address, val, );
+                self.mem.write(address, val);
                 self.reg.set_flag(Zero, self.mem.read(address) == 0);
                 16
             }
@@ -1070,7 +1084,7 @@ impl Cpu {
             RotateRightHL { use_carry } => {
                 let address = self.reg.read_word(Register16bit::HL);
                 let val = self.alu_rotate_right(self.mem.read(address), use_carry);
-                self.mem.write( address, val, );
+                self.mem.write(address, val);
                 self.reg.set_flag(Zero, self.mem.read(address) == 0);
                 16
             }
@@ -1084,7 +1098,7 @@ impl Cpu {
             ShiftLeftHL => {
                 let address = self.reg.read_word(Register16bit::HL);
                 let val = self.alu_shift_left(self.mem.read(address));
-                self.mem .write(address, val);
+                self.mem.write(address, val);
                 8
             }
             //sra  r         CB 2x        8 z00c shift right arithmetic (b7=b7)
@@ -1156,7 +1170,7 @@ impl Cpu {
                 assert!(bit <= 7);
                 let address = self.reg.read_word(Register16bit::HL);
                 let val = self.mem.read(address) & !(1 << bit);
-                self.mem .write(address, val);
+                self.mem.write(address, val);
                 assert!(!ith_bit(self.mem.read(address), bit));
                 16
             }
@@ -1887,7 +1901,7 @@ impl Cpu {
                     0x28..=0x2D => (
                         ShiftRightRegister {
                             r: Register::from(op & 0b0111),
-                            is_arithmetic: true
+                            is_arithmetic: true,
                         },
                         2,
                     ),
@@ -2472,11 +2486,17 @@ impl Cpu {
 mod test
 {
     use crate::cpu::Cpu;
+    use crate::registers::Register;
 
     #[test]
     fn alu()
     {
-        unimplemented!();
+        let cartridge = [u8; 0x8000];
+        let mut cpu = Cpu::new(cartridge);
+
+        let a = cpu.reg.read(Register::A);
+        cpu.alu_add(40, false);
+        assert_eq!(a, cpu.reg.read(Register::A));
     }
 
     #[test]

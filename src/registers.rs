@@ -42,6 +42,7 @@ pub enum Register16bit {
     AF = Register::A as isize,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Registers {
     reg: [u8; 8]
 }
