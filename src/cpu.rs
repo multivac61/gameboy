@@ -436,10 +436,6 @@ impl Cpu {
                              self.pc, self.sp, stack_data, v, tabs, self.reg, self.mem.read(LY), instruction);
                 }
 
-            if self.pc == 0xc7d2 {
-                panic!();
-            }
-
             self.pc += pc_increments;
             let cycles = self.execute_instruction(instruction);
             cur_num_cycles += u64::from(cycles);
@@ -1799,14 +1795,14 @@ impl Cpu {
             0xF8 => (LoadHLwithSPplus { d: immediate_i8() }, 2),
 
             //GMB Rotate- und Shift-Commands
-            //rlca           07           4 000c rotate akku left through carry
-            0x07 => (RotateLeft { use_carry: true }, 1),
-            //rla            17           4 000c rotate akku left
-            0x17 => (RotateLeft { use_carry: false }, 1),
-            //rrca           0F           4 000c rotate akku right through carry
-            0x0F => (RotateRight { use_carry: true }, 1),
-            //rra            1F           4 000c rotate akku right
-            0x1F => (RotateRight { use_carry: false }, 1),
+            //rlca           07           4 000c rotate akku left
+            0x07 => (RotateLeft { use_carry: false }, 1),
+            //rla            17           4 000c rotate akku left through carry
+            0x17 => (RotateLeft { use_carry: true }, 1),
+            //rrca           0F           4 000c rotate akku right
+            0x0F => (RotateRight { use_carry: false }, 1),
+            //rra            1F           4 000c rotate akku right through carry
+            0x1F => (RotateRight { use_carry: true }, 1),
             0xCB => {
                 let op = self.mem.read(self.pc + 1);
                 match op {
@@ -1815,15 +1811,15 @@ impl Cpu {
                     0x00..=0x05 => (
                         RotateLeftRegister {
                             r: Register::from(op & 0b0111),
-                            use_carry: true,
+                            use_carry: false,
                         },
                         2,
                     ),
-                    0x06 => (RotateLeftHL { use_carry: true }, 2),
+                    0x06 => (RotateLeftHL { use_carry: false }, 2),
                     0x07 => (
                         RotateLeftRegister {
                             r: Register::A,
-                            use_carry: true,
+                            use_carry: false,
                         },
                         2,
                     ),
@@ -1832,15 +1828,15 @@ impl Cpu {
                     0x08..=0x0D => (
                         RotateRightRegister {
                             r: Register::from((op - 8) & 0b0111),
-                            use_carry: true,
+                            use_carry: false,
                         },
                         2,
                     ),
-                    0x0E => (RotateRightHL { use_carry: true }, 2),
+                    0x0E => (RotateRightHL { use_carry: false }, 2),
                     0x0F => (
                         RotateRightRegister {
                             r: Register::A,
-                            use_carry: true,
+                            use_carry: false,
                         },
                         2,
                     ),
@@ -1849,15 +1845,15 @@ impl Cpu {
                     0x10..=0x15 => (
                         RotateLeftRegister {
                             r: Register::from(op & 0b0111),
-                            use_carry: false,
+                            use_carry: true,
                         },
                         2,
                     ),
-                    0x16 => (RotateLeftHL { use_carry: false }, 2),
+                    0x16 => (RotateLeftHL { use_carry: true }, 2),
                     0x17 => (
                         RotateLeftRegister {
                             r: Register::A,
-                            use_carry: false,
+                            use_carry: true,
                         },
                         2,
                     ),
@@ -1866,15 +1862,15 @@ impl Cpu {
                     0x18..=0x1D => (
                         RotateRightRegister {
                             r: Register::from((op - 8) & 0b0111),
-                            use_carry: false,
+                            use_carry: true,
                         },
                         2,
                     ),
-                    0x1E => (RotateRightHL { use_carry: false }, 2),
+                    0x1E => (RotateRightHL { use_carry: true }, 2),
                     0x1F => (
                         RotateRightRegister {
                             r: Register::A,
-                            use_carry: false,
+                            use_carry: true,
                         },
                         2,
                     ),

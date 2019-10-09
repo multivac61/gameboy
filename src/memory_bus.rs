@@ -174,7 +174,6 @@ impl MemoryBus {
                 self.raw_memory
                     .copy_within(source..source + 0xA0, OAM as usize);
             },
-            TIMA => panic!("wrote TIMA"),
             BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
             _ => self.raw_memory[address as usize] = data,
         }
