@@ -55,8 +55,13 @@ impl Registers {
     }
 
     pub fn write_word(&mut self, r: Register16bit, val: u16) {
+        let lsb_mask = match r {
+            Register16bit::AF => 0xF0,
+            _ => 0xFF
+        };
+
         self.reg[r as usize] = little_endian::msb(val);
-        self.reg[r as usize + 1] = little_endian::lsb(val);
+        self.reg[r as usize + 1] = little_endian::lsb(val) & lsb_mask;
     }
 
     pub fn read_word(&self, r: Register16bit) -> u16 {

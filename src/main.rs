@@ -10,7 +10,7 @@ mod instructions;
 mod memory_bus;
 mod util;
 mod registers;
-mod serial;
+//mod serial;
 
 const ONE_SECOND_IN_MICROS: usize = 1000000000;
 const ONE_SECOND_IN_CYCLES: usize = 4190000;
@@ -31,12 +31,14 @@ fn main() {
 //        .join(std::path::Path::new("cpu_instrs.gb"));
 //        .join(std::path::Path::new("06-ld r,r.gb"));
         .join(std::path::Path::new("individual"))
-//        .join(std::path::Path::new("01-special.gb"));
+        .join(std::path::Path::new("01-special.gb"));
 //    .join(std::path::Path::new("02-interrupts.gb"));
 //            .join(std::path::Path::new("03-op sp,hl.gb"));
 //    .join(std::path::Path::new("04-op r,imm.gb"));
-    .join(std::path::Path::new("06-ld r,r.gb"));
+//    .join(std::path::Path::new("06-ld r,r.gb"));
 //    .join(std::path::Path::new("07-jr,jp,call,ret,rst.gb"));
+//    .join(std::path::Path::new("09-op r,r.gb"));
+//    .join(std::path::Path::new("11-op a,(hl).gb"));
 
 //        let file_path = std::path::Path::new("/home/dingari/vblank_stat_intr-C.gb");
 

@@ -391,11 +391,9 @@ impl Cpu {
             if ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
                 self.are_interrupts_enabled = false;
                 let not_requested_anymore = is_requested & !(1 << i);
-                self.mem
-                    .write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
+                self.mem .write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
 
-                self.sp -= 2;
-                self.mem.write_word(self.sp, self.pc);
+                self.push_stack(self.pc);
 
                 self.pc = match Interrupt::from(i) {
                     Interrupt::VBlank => 0x40,
@@ -441,6 +439,7 @@ impl Cpu {
             if self.pc == 0xc7d2 {
                 panic!();
             }
+
             self.pc += pc_increments;
             let cycles = self.execute_instruction(instruction);
             cur_num_cycles += u64::from(cycles);
@@ -450,6 +449,18 @@ impl Cpu {
         }
 
         total_cycles as usize
+    }
+
+    fn push_stack(&mut self, val: u16) {
+        self.sp -= 2;
+        self.mem.write_word(self.sp, val);
+    }
+
+    fn pop_stack(&mut self) -> u16 {
+        let val = self.mem.read_word(self.sp);
+        self.sp += 2;
+
+        val
     }
 
     fn alu_add16(&mut self, b: u16) {
@@ -591,14 +602,13 @@ impl Cpu {
     }
 
     fn alu_shift_right(&mut self, x: u8, is_arithmatic: bool) -> u8 {
-        let carry = ith_bit(x, 0);
         let sign_bit = if is_arithmatic { ith_bit(x, 7) as u8 } else { 0 };
         let r = (x >> 1) | ((sign_bit as u8) << 7);
         self.reg.set_flags(Flags {
             z: r == 0,
             n: false,
             h: false,
-            c: carry,
+            c: ith_bit(x, 0),
         });
         r
     }
@@ -709,14 +719,12 @@ impl Cpu {
             }
             // ld   A,(FF00+n)  F0 nn     12 ---- read from io-port n (memory FF00+n)
             LoadAwithFF00plusN { n } => {
-                self.reg
-                    .write(Register::A, self.mem.read(u16::from(n) + 0xFF00));
+                self.reg.write(Register::A, self.mem.read(u16::from(n) + 0xFF00));
                 12
             }
             // ld   (FF00+n),A  E0 nn     12 ---- write to io-port n (memory FF00+n)
             LoadMemoryFF00plusNwithA { nn } => {
-                self.mem
-                    .write(u16::from(nn) + 0xFF00, self.reg.read(Register::A));
+                self.mem.write(u16::from(nn) + 0xFF00, self.reg.read(Register::A));
                 12
             }
             // ld   A,(FF00+C)  F2         8 ---- read from io-port C (memory FF00+C)
@@ -790,25 +798,14 @@ impl Cpu {
             }
             // push rr          x5 (c5, d5, e5, f5)        16 ---- SP=SP-2  (SP)=rr   (rr may be BC,DE,HL,AF)
             Push { rr } => {
-                let value = self.reg.read_word(rr);
-
-                self.sp = self.sp.wrapping_sub(1);
-                self.mem.write(self.sp, ((value & 0xFF00) >> 8) as u8);
-
-                self.sp = self.sp.wrapping_sub(1);
-                self.mem.write(self.sp, (value & 0xFF) as u8);
+                self.push_stack(self.reg.read_word(rr));
 
                 16
             }
             // pop  rr          x1 (c1, d1, e1, f1)      12 (AF) rr=(SP)  SP=SP+2   (rr may be BC,DE,HL,AF)
             Pop { rr } => {
-                let lsb = self.mem.read(self.sp) as u16;
-                self.sp = self.sp.wrapping_add(1);
-
-                let msb = self.mem.read(self.sp) as u16;
-                self.sp = self.sp.wrapping_add(1);
-
-                self.reg.write_word(rr, (msb << 8) | lsb);
+                let val = self.pop_stack();
+                self.reg.write_word(rr, val);
                 12
             }
 
@@ -967,7 +964,7 @@ impl Cpu {
                 self.mem.write(address, val);
                 12
             }
-            //  daa              27         4 z-0x decimal adjust akku
+            //  daa              27         4 z-0c decimal adjust akku
             DecimalAdjust => {
                 // The BCD Flags (N, H)
                 // These flags are (rarely) used for the DAA instruction only, N Indicates whether the previous instruction has been an addition or subtraction, and H indicates carry for lower 4bits of the result, also for DAA, the C flag must indicate carry for upper 8bits.
@@ -1040,21 +1037,21 @@ impl Cpu {
             }
 
             //GMB Rotate- und Shift-Commands
-            //rlca           07           4 000c rotate akku left
-            //rla            17           4 000c rotate akku left through carry
+            //rlca           07           4 000c rotate akku left through carry
+            //rla            17           4 000c rotate akku left
             RotateLeft { use_carry } => {
                 let val = self.alu_rotate_left(self.reg.read(Register::A), use_carry);
                 self.reg.write(Register::A, val);
                 4
             }
-            //rrca           0F           4 000c rotate akku right
-            //rra            1F           4 000c rotate akku right through carry
+            //rrca           0F           4 000c rotate akku right through carry
+            //rra            1F           4 000c rotate akku right
             RotateRight { use_carry } => {
                 let val = self.alu_rotate_right(self.reg.read(Register::A), use_carry);
                 self.reg.write(Register::A, val);
                 4
             }
-            //rlc  r         CB 0x        8 z00c rotate left
+            //rlc  r         CB 0x        8 z00c rotate left through carry
             //rl   r         CB 1x        8 z00c rotate left
             RotateLeftRegister { r, use_carry } => {
                 let val = self.alu_rotate_left(self.reg.read(r), use_carry);
@@ -1062,7 +1059,7 @@ impl Cpu {
                 self.reg.set_flag(Zero, self.reg.read(r) == 0);
                 4
             }
-            //rlc  (HL)      CB 06       16 z00c rotate left
+            //rlc  (HL)      CB 06       16 z00c rotate left through carry
             //rrc  r         CB 0x        8 z00c rotate right
             RotateRightRegister { r, use_carry } => {
                 let val = self.alu_rotate_right(self.reg.read(r), use_carry);
@@ -1258,8 +1255,7 @@ impl Cpu {
             }
             //call nn        CD nn nn    24 ---- call to nn, SP=SP-2, (SP)=PC, PC=nn
             CALL { nn } => {
-                self.sp -= 2;
-                self.mem.write_word(self.sp, self.pc);
+                self.push_stack(self.pc);
                 self.pc = nn;
                 24
             }
@@ -1271,8 +1267,7 @@ impl Cpu {
             } => {
                 assert!(flag == Zero || flag == Carry);
                 if self.reg.get_flag(flag) == check_state {
-                    self.sp -= 2;
-                    self.mem.write_word(self.sp, self.pc);
+                    self.push_stack(self.pc);
                     self.pc = nn;
                     24
                 } else {
@@ -1281,16 +1276,14 @@ impl Cpu {
             }
             //ret            C9          16 ---- return, PC=(SP), SP=SP+2
             RET => {
-                self.pc = self.mem.read_word(self.sp);
-                self.sp += 2;
+                self.pc = self.pop_stack();
                 16
             }
             //ret  f         xx        20;8 ---- conditional return if nz,z,nc,c
             CondRET { flag, check_state } => {
                 assert!(flag == Zero || flag == Carry);
                 if self.reg.get_flag(flag) == check_state {
-                    self.pc = self.mem.read_word(self.sp);
-                    self.sp += 2;
+                    self.pc = self.pop_stack();
                     20
                 } else {
                     8
@@ -1298,15 +1291,14 @@ impl Cpu {
             }
             //reti           D9          16 ---- return and enable interrupts (IME=1)
             RETI => {
-                self.pc = self.mem.read_word(self.sp);
-                self.sp += 2;
+                self.pc = self.pop_stack();
+
                 self.are_interrupts_enabled = true;
                 16
             }
             //rst  n         xx          16 ---- call to 00,08,10,18,20,28,30,38
             RST { n } => {
-                self.sp -= 2;
-                self.mem.write_word(self.sp, self.pc);
+                self.push_stack(self.pc);
                 self.pc = n;
                 24
             }
@@ -1347,7 +1339,7 @@ impl Cpu {
             0x48..=0x4D => (
                 LoadReg {
                     to: Register::C,
-                    from: Register::from(op & 0b0111),
+                    from: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1377,7 +1369,7 @@ impl Cpu {
             0x58..=0x5D => (
                 LoadReg {
                     to: Register::E,
-                    from: Register::from(op & 0b0111),
+                    from: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1407,7 +1399,7 @@ impl Cpu {
             0x68..=0x6D => (
                 LoadReg {
                     to: Register::L,
-                    from: Register::from(op & 0b0111),
+                    from: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1422,7 +1414,7 @@ impl Cpu {
             0x78..=0x7D => (
                 LoadReg {
                     to: Register::A,
-                    from: Register::from(op & 0b0111),
+                    from: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1634,7 +1626,7 @@ impl Cpu {
             //  adc  A,r         8x         4 z0hc A=A+r+cy
             0x88..=0x8D => (
                 AddRegisterWithCarry {
-                    r: Register::from(op & 0b0111),
+                    r: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1658,7 +1650,7 @@ impl Cpu {
             //  sbc  A,r         9x         4 z1hc A=A-r-cy
             0x98..=0x9D => (
                 SubtractRegisterWithCarry {
-                    r: Register::from(op & 0b0111),
+                    r: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1682,7 +1674,7 @@ impl Cpu {
             //  xor  r           Ax         4 z000
             0xA8..=0xAD => (
                 XorRegister {
-                    r: Register::from(op & 0b0111),
+                    r: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1706,7 +1698,7 @@ impl Cpu {
             //  cp   r           Bx         4 z1hc compare A-r
             0xB8..=0xBD => (
                 CompareRegister {
-                    r: Register::from(op & 0b0111),
+                    r: Register::from((op - 8) & 0b0111),
                 },
                 1,
             ),
@@ -1807,13 +1799,13 @@ impl Cpu {
             0xF8 => (LoadHLwithSPplus { d: immediate_i8() }, 2),
 
             //GMB Rotate- und Shift-Commands
-            //rlca           07           4 000c rotate akku left
-            0x07 => (RotateLeft { use_carry: false }, 1),
-            //rla            17           4 000c rotate akku left through carry
-            0x17 => (RotateLeft { use_carry: true }, 1),
-            //rrca           0F           4 000c rotate akku right
-            0x0F => (RotateRight { use_carry: false }, 1),
-            //rra            1F           4 000c rotate akku right through carry
+            //rlca           07           4 000c rotate akku left through carry
+            0x07 => (RotateLeft { use_carry: true }, 1),
+            //rla            17           4 000c rotate akku left
+            0x17 => (RotateLeft { use_carry: false }, 1),
+            //rrca           0F           4 000c rotate akku right through carry
+            0x0F => (RotateRight { use_carry: true }, 1),
+            //rra            1F           4 000c rotate akku right
             0x1F => (RotateRight { use_carry: false }, 1),
             0xCB => {
                 let op = self.mem.read(self.pc + 1);
@@ -1839,7 +1831,7 @@ impl Cpu {
                     //rrc  (HL)      CB 0E       16 z00c rotate right
                     0x08..=0x0D => (
                         RotateRightRegister {
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                             use_carry: true,
                         },
                         2,
@@ -1873,7 +1865,7 @@ impl Cpu {
                     //rr   (HL)      CB 1E       16 z00c rotate right through carry
                     0x18..=0x1D => (
                         RotateRightRegister {
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                             use_carry: false,
                         },
                         2,
@@ -1900,7 +1892,7 @@ impl Cpu {
                     //sra  (HL)      CB 2E       16 z00c shift right arithmetic (b7=b7)
                     0x28..=0x2D => (
                         ShiftRightRegister {
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                             is_arithmetic: true,
                         },
                         2,
@@ -1921,7 +1913,7 @@ impl Cpu {
                     //srl  (HL)      CB 3E       16 z00c shift right logical (b7=0)
                     0x38..=0x3D => (
                         ShiftRightRegister {
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                             is_arithmetic: false,
                         },
                         2,
@@ -1950,7 +1942,7 @@ impl Cpu {
                     0x48..=0x4D => (
                         TestBitRegister {
                             bit: 1,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -1980,7 +1972,7 @@ impl Cpu {
                     0x58..=0x5D => (
                         TestBitRegister {
                             bit: 3,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2010,7 +2002,7 @@ impl Cpu {
                     0x68..=0x6D => (
                         TestBitRegister {
                             bit: 5,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2040,7 +2032,7 @@ impl Cpu {
                     0x78..=0x7D => (
                         TestBitRegister {
                             bit: 7,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2073,7 +2065,7 @@ impl Cpu {
                     0x88..=0x8D => (
                         ResetBitRegister {
                             bit: 1,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2103,7 +2095,7 @@ impl Cpu {
                     0x98..=0x9D => (
                         ResetBitRegister {
                             bit: 3,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2133,7 +2125,7 @@ impl Cpu {
                     0xA8..=0xAD => (
                         ResetBitRegister {
                             bit: 5,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2163,7 +2155,7 @@ impl Cpu {
                     0xB8..=0xBD => (
                         ResetBitRegister {
                             bit: 7,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2196,7 +2188,7 @@ impl Cpu {
                     0xC8..=0xCD => (
                         SetBitRegister {
                             bit: 1,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2226,7 +2218,7 @@ impl Cpu {
                     0xD8..=0xDD => (
                         SetBitRegister {
                             bit: 3,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2256,7 +2248,7 @@ impl Cpu {
                     0xE8..=0xED => (
                         SetBitRegister {
                             bit: 5,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
@@ -2286,7 +2278,7 @@ impl Cpu {
                     0xF8..=0xFD => (
                         SetBitRegister {
                             bit: 7,
-                            r: Register::from(op & 0b0111),
+                            r: Register::from((op - 8) & 0b0111),
                         },
                         2,
                     ),
