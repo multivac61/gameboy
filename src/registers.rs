@@ -8,6 +8,7 @@ pub enum ConditionalFlag {
     Carry = 4,
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub struct Flags {
     pub z: bool,
     pub n: bool,
@@ -97,6 +98,15 @@ impl Registers {
         self.set_flag(ConditionalFlag::Subtract, flags.n);
         self.set_flag(ConditionalFlag::HalfCarry, flags.h);
         self.set_flag(ConditionalFlag::Carry, flags.c);
+    }
+
+    pub fn get_flags(&self) -> Flags {
+        Flags {
+            z: self.get_flag(ConditionalFlag::Zero),
+            n: self.get_flag(ConditionalFlag::Subtract),
+            h: self.get_flag(ConditionalFlag::HalfCarry),
+            c: self.get_flag(ConditionalFlag::Carry),
+        }
     }
 }
 
