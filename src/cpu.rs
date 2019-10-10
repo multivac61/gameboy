@@ -559,7 +559,7 @@ impl Cpu {
         let c = if use_carry { self.reg.get_flag(Carry) } else { ith_bit(x, 7) };
         let r = (x << 1) | c as u8;
         self.reg.set_flags(Flags {
-            z: r == 0,
+            z: false,
             n: false,
             h: false,
             c: ith_bit(x, 7),
@@ -571,7 +571,7 @@ impl Cpu {
         let c = if use_carry { self.reg.get_flag(Carry) } else { ith_bit(x, 0) };
         let r = (x >> 1) | ((c as u8) << 7);
         self.reg.set_flags(Flags {
-            z: r == 0,
+            z: false,
             n: false,
             h: false,
             c: ith_bit(x, 0),
@@ -598,7 +598,7 @@ impl Cpu {
             z: r == 0,
             n: false,
             h: false,
-            c: !is_arithmetic && ith_bit(x, 0),
+            c: ith_bit(x, 0),
         });
         r
     }
@@ -615,6 +615,7 @@ impl Cpu {
     }
 
     fn alu_test_bit(&mut self, x: u8, bit: u8) {
+        assert!(bit <= 7);
         self.reg.set_flags(Flags {
             z: !ith_bit(x, bit),
             n: false,
@@ -647,7 +648,6 @@ impl Cpu {
             }
         } else if self.reg.get_flag(Carry) {
             a = a.wrapping_add(if self.reg.get_flag(HalfCarry) { 0x9a } else { 0xa0 });
-
         } else if self.reg.get_flag(HalfCarry) {
             a = a.wrapping_add(0xfa);
         }
@@ -1125,13 +1125,11 @@ impl Cpu {
             //GMB Singlebit Operation Commands
             //bit  n,r       CB xx        8 z01- test bit n
             TestBitRegister { bit, r } => {
-                assert!(bit <= 7);
                 self.alu_test_bit(self.reg.read(r), bit);
                 8
             }
             //bit  n,(HL)    CB xx       12 z01- test bit n
             TestBitMemoryHL { bit } => {
-                assert!(bit <= 7);
                 let address = self.reg.read_word(Register16bit::HL);
                 self.alu_test_bit(self.mem.read(address), bit);
                 12
