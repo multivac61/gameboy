@@ -28,11 +28,11 @@ fn main() {
         .join(std::path::Path::new(".."))
         .join(std::path::Path::new("gb-test-roms"))
         .join(std::path::Path::new("cpu_instrs"))
-//        .join(std::path::Path::new("cpu_instrs.gb"));
+        .join(std::path::Path::new("cpu_instrs.gb"));
 //        .join(std::path::Path::new("06-ld r,r.gb"));
-        .join(std::path::Path::new("individual"))
+//        .join(std::path::Path::new("individual"))
 //        .join(std::path::Path::new("01-special.gb"));
-//    .join(std::path::Path::new("02-interrupts.gb"));
+//        .join(std::path::Path::new("02-interrupts.gb"));
 //            .join(std::path::Path::new("03-op sp,hl.gb"));
 //    .join(std::path::Path::new("04-op r,imm.gb"));
 //    .join(std::path::Path::new("05-op rp.gb"));
@@ -41,7 +41,7 @@ fn main() {
 //    .join(std::path::Path::new("08-misc instrs.gb"));
 //    .join(std::path::Path::new("09-op r,r.gb"));
 //    .join(std::path::Path::new("10-bit ops.gb"));
-    .join(std::path::Path::new("11-op a,(hl).gb"));
+//    .join(std::path::Path::new("11-op a,(hl).gb"));
 
 //        let file_path = std::path::Path::new("/home/dingari/vblank_stat_intr-C.gb");
 

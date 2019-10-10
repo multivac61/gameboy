@@ -98,11 +98,11 @@ pub enum Interrupt {
 impl std::convert::From<u8> for Interrupt {
     fn from(n: u8) -> Interrupt {
         match n {
-            0b000 => Interrupt::VBlank,
-            0b001 => Interrupt::LCD,
-            0b010 => Interrupt::Timer,
-            0b011 => Interrupt::SerialTxComplete,
-            0b100 => Interrupt::Joypad,
+            0 => Interrupt::VBlank,
+            1 => Interrupt::LCD,
+            2 => Interrupt::Timer,
+            3 => Interrupt::SerialTxComplete,
+            4 => Interrupt::Joypad,
             _ => unreachable!(),
         }
     }
@@ -151,7 +151,7 @@ impl Cpu {
             self.timer_counter -= i64::from(cycles);
 
             if self.timer_counter <= 0 {
-                self.timer_counter = match self.mem.read(TMA) {
+                let timer_mod = match self.mem.read(TAC) & 0b11 {
                     0 => 1024,
                     1 => 16,
                     2 => 64,
@@ -159,7 +159,9 @@ impl Cpu {
                     _ => unreachable!(),
                 };
 
-                if self.mem.read(TIMA) > 0 {
+                self.timer_counter %= timer_mod;
+
+                if self.mem.read(TIMA) == 0xFF {
                     self.mem.write(TIMA, self.mem.read(TMA));
                     self.request_interrupt(Interrupt::Timer);
                 } else {
@@ -378,11 +380,12 @@ impl Cpu {
 
     fn request_interrupt(&mut self, interrupt: Interrupt) {
         let val = self.mem.read(INTERRUPT_REQUEST_REGISTER);
-        self.mem
-            .write(INTERRUPT_REQUEST_REGISTER, val & (1 << interrupt as u8));
+        self.mem.write(INTERRUPT_REQUEST_REGISTER, val | (1 << interrupt as u8));
+
+        self.is_halted = false;
     }
 
-    fn do_interrupts(&mut self) {
+    fn do_interrupts(&mut self) -> u8 {
         let is_requested = self.mem.read(INTERRUPT_REQUEST_REGISTER);
         let is_enabled = self.mem.read(INTERRUPT_ENABLE_REGISTER);
         let is_requested_and_enabled = is_requested & is_enabled;
@@ -390,8 +393,9 @@ impl Cpu {
         for i in 0..5 {
             if ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
                 self.are_interrupts_enabled = false;
+
                 let not_requested_anymore = is_requested & !(1 << i);
-                self.mem .write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
+                self.mem.write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
 
                 self.push_stack(self.pc);
 
@@ -402,46 +406,37 @@ impl Cpu {
                     Interrupt::SerialTxComplete => 0x58,
                     Interrupt::Joypad => 0x60,
                 };
+
+                return 16;
             }
         }
+
+        0
     }
 
     pub fn cycle(&mut self, s: f64) -> usize {
         let total_cycles = (s * CLOCK_FREQUENCY).round() as u64;
         let mut cur_num_cycles = 0;
 
-        while cur_num_cycles < total_cycles && !self.is_halted {
-//            let (instruction, pc_increments) = if !self.is_halted { self.fetch_instruction() } else { (NOP, 0) };
-            let (instruction, pc_increments) = self.fetch_instruction();
+        while cur_num_cycles < total_cycles {
+            let program_cycles = if (!self.is_halted) {
+                let (instruction, pc_increments) = self.fetch_instruction();
 
-            #[cfg(debug_assertions)]
-                {
-                    let v = self.mem.raw_memory
-                        [self.pc as usize..self.pc as usize + pc_increments as usize]
-                        .to_vec();
-                    let tabs = match v.len() {
-                        0 => "",
-                        1 => "\t\t\t",
-                        2 => "\t\t",
-                        3 => "\t",
-                        _ => unreachable!(),
-                    };
+                #[cfg(debug_assertions)]
+                println!("{:?}", self);
 
-                    let stack_data: u16 = if self.sp >= 0xffff {
-                        0
-                    } else {
-                        self.mem.read_word(self.sp)
-                    };
-                    println!("PC: {:4x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
-                             self.pc, self.sp, stack_data, v, tabs, self.reg, self.mem.read(LY), instruction);
-                }
+                self.pc += pc_increments;
+                self.execute_instruction(instruction)
+            } else {
+                4
+            };
 
-            self.pc += pc_increments;
-            let cycles = self.execute_instruction(instruction);
-            cur_num_cycles += u64::from(cycles);
+            let interrupt_cycles = self.do_interrupts();
+            let cycles = (program_cycles + interrupt_cycles);
             self.update_timers(cycles);
             self.update_graphics(cycles);
-            self.do_interrupts();
+
+            cur_num_cycles +=  cycles as u64;
         }
 
         total_cycles as usize
@@ -877,7 +872,7 @@ impl Cpu {
             //  sbc  A,n         DE nn      8 z1hc A=A-n-cy
             SubtractConstantWithCarry { n } => {
                 self.alu_sub(n, true);
-                4
+                8
             }
             //  sbc  A,(HL)      9E         8 z1hc A=A-(HL)-cy
             SubtractMemoryHLWithCarry => {
@@ -920,7 +915,7 @@ impl Cpu {
             //  or   r           Bx         4 z000 A=A | r
             OrRegister { r } => {
                 self.alu_or(self.reg.read(r));
-                8
+                4
             }
             //  or   n           F6 nn      8 z000 A=A | n
             OrConstant { n } => {
@@ -1296,7 +1291,7 @@ impl Cpu {
             RST { n } => {
                 self.push_stack(self.pc);
                 self.pc = n;
-                24
+                16
             }
             LoadAddressWithSP { n } => {
                 self.mem.write_word(n, self.sp);
@@ -2467,6 +2462,33 @@ impl Cpu {
             0x08 => (LoadAddressWithSP { n: immediate_u16() }, 3),
             _ => panic!("pc: {:x?}, op: {:x?}", self.pc, op),
         }
+    }
+}
+
+use std::fmt;
+
+impl fmt::Debug for Cpu {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (instr, incr) = self.fetch_instruction();
+        let v = self.mem.raw_memory
+            [self.pc as usize..self.pc as usize + incr as usize]
+            .to_vec();
+        let tabs = match v.len() {
+            0 => "",
+            1 => "\t\t\t",
+            2 => "\t\t",
+            3 => "\t",
+            _ => unreachable!(),
+        };
+
+        let stack_data: u16 = if self.sp >= 0xffff {
+            0
+        } else {
+            self.mem.read_word(self.sp)
+        };
+
+        write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
+                 self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(LY), instr)
     }
 }
 
