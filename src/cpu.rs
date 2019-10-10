@@ -318,7 +318,7 @@ impl Cpu {
 
     fn get_color(&self, colour_id: u8, address: u16) -> u8 {
         let palette = self.mem.read(address);
-        let colour_bits = (palette >> colour_id) & 0b11;
+        let colour_bits = (palette >> (2 * colour_id)) & 0b11;
         match colour_bits {
             3 => BLACK,
             2 => DARK_GRAY,
