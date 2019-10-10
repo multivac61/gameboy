@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER, DIV, DMA, OAM, TIMA, TAC};
+use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER, DIV, DMA, OAM};
 use crate::util::little_endian;
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)

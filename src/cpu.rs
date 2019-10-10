@@ -420,11 +420,10 @@ impl Cpu {
 
         while cur_num_cycles < total_cycles {
             let program_cycles = if (!self.is_halted) {
-                let (instruction, pc_increments) = self.fetch_instruction();
-
                 #[cfg(debug_assertions)]
                 println!("{:?}", self);
 
+                let (instruction, pc_increments) = self.fetch_instruction();
                 self.pc += pc_increments;
                 self.execute_instruction(instruction)
             } else {
@@ -436,7 +435,7 @@ impl Cpu {
             self.update_timers(cycles);
             self.update_graphics(cycles);
 
-            cur_num_cycles +=  cycles as u64;
+            cur_num_cycles += cycles as u64;
         }
 
         total_cycles as usize
@@ -789,12 +788,10 @@ impl Cpu {
             // ld   rr,nn       x1 nn nn  12 ---- rr=nn (rr may be BC,DE,HL or SP)
             LoadRegWith16BitConstant { rr, nn } => {
                 self.reg.write_word(rr, nn);
-
                 12
             }
             LoadSPWith16BitConstant { nn } => {
                 self.sp = nn;
-
                 12
             }
             // ld   SP,HL       F9         8 ---- SP=HL
@@ -996,8 +993,8 @@ impl Cpu {
                 8
             }
             AddRegisterSPtoHL16bit {} => {
-                self.sp = self.alu_add16(self.sp, self.reg.read_word(Register16bit::HL));
-                self.reg.set_flag(Zero, false);
+                let val = self.alu_add16(self.reg.read_word(Register16bit::HL), self.sp);
+                self.reg.write_word(Register16bit::HL, val);
                 8
             }
             //inc  rr        x3           8 ---- rr = rr+1      ;rr may be BC,DE,HL,SP
@@ -1006,7 +1003,7 @@ impl Cpu {
                 8
             }
             IncrementSP {} => {
-                self.sp += 1;
+                self.sp = self.sp.wrapping_add(1);
                 8
             }
             //dec  rr        xB           8 ---- rr = rr-1      ;rr may be BC,DE,HL,SP
@@ -1015,20 +1012,37 @@ impl Cpu {
                 8
             }
             DecrementSP {} => {
-                self.sp -= 1;
+                self.sp = self.sp.wrapping_sub(1);
                 8
             }
             //add  SP,dd     E8          16 00hc SP = SP +/- dd ;dd is 8bit signed number
             AddSP { d } => {
-                self.sp = self.alu_add16(self.sp, d as i16 as u16);
-                self.reg.set_flag(Zero, false);
+                let a = self.sp;
+                let b = d as i16 as u16;
+                self.sp = a.wrapping_add(b);
+
+                self.reg.set_flags(Flags {
+                    z: false,
+                    n: false,
+                    h: (a & 0xF) + (b & 0xF) > 0xF,
+                    c: (a & 0xFF) + (b & 0xFF) > 0xFF,
+                });
+
                 16
             }
             //ld   HL,SP+dd  F8          12 00hc HL = SP +/- dd ;dd is 8bit signed number
             LoadHLwithSPplus { d } => {
-                let val = self.alu_add16(self.sp, d as i16 as u16);
-                self.reg.write_word(Register16bit::HL, val);
-                self.reg.set_flag(Zero, false);
+                let a = self.sp;
+                let b = d as i16 as u16;
+                self.reg.write_word(Register16bit::HL, a.wrapping_add(b));
+
+                self.reg.set_flags(Flags {
+                    z: false,
+                    n: false,
+                    h: (a & 0xF) + (b & 0xF) > 0xF,
+                    c: (a & 0xFF) + (b & 0xFF) > 0xFF,
+                });
+
                 12
             }
 
@@ -2486,7 +2500,7 @@ impl fmt::Debug for Cpu {
         };
 
         write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
-                 self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(LY), instr)
+               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(LY), instr)
     }
 }
 
