@@ -23,12 +23,13 @@ const WINDOW_DIMENSIONS: [usize; 2] = [(160 * ENLARGEMENT_FACTOR), (144 * ENLARG
 fn main() {
     let file_path = std::env::current_dir()
         .unwrap()
-//                .join(std::path::Path::new("src"))
-//                .join(std::path::Path::new("Tetris.gb"));
-        .join(std::path::Path::new(".."))
-        .join(std::path::Path::new("gb-test-roms"))
-        .join(std::path::Path::new("cpu_instrs"))
-        .join(std::path::Path::new("cpu_instrs.gb"));
+        .join(std::path::Path::new("src"))
+        .join(std::path::Path::new("Tetris.gb"));
+//        .join(std::path::Path::new("Dr. Mario (World).gb"));
+//        .join(std::path::Path::new(".."))
+//        .join(std::path::Path::new("gb-test-roms"))
+//        .join(std::path::Path::new("cpu_instrs"))
+//        .join(std::path::Path::new("cpu_instrs.gb"));
 //        .join(std::path::Path::new("06-ld r,r.gb"));
 //        .join(std::path::Path::new("individual"))
 //        .join(std::path::Path::new("01-special.gb"));

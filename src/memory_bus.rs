@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER, DIV, DMA, OAM};
+use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER, DIV, DMA, OAM, P1};
 use crate::util::little_endian;
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
@@ -41,6 +41,7 @@ impl MemoryBus {
         let mut m = vec![0; 0x10000];
 
         m[0..0x4000].copy_from_slice(&cartridge[0..0x4000]);
+        m[P1 as usize] = 0b0011_1111;
 
         let file_path = std::env::current_dir()
             .unwrap()
@@ -167,6 +168,7 @@ impl MemoryBus {
                 self.raw_memory[address as usize - (0xE000 - 0xC000)] = data;
             }
             0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
+            P1=> self.raw_memory[address as usize] = (data & 0b0011_0000) | self.read(P1),
             0xFF01 => print!("{}", data as char),
             DIV => self.raw_memory[DIV as usize] = 0,
             DMA => {

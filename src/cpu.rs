@@ -11,6 +11,7 @@ const CLOCK_FREQUENCY: f64 = 4_194_304.0;
 
 pub const OAM: u16 = 0xFE00;
 
+pub const P1: u16 = 0xFF00;
 pub const DIV: u16 = 0xFF04;
 pub const TIMA: u16 = 0xFF05;
 pub const TMA: u16 = 0xFF06;
@@ -126,8 +127,8 @@ impl Cpu {
     pub fn new(cartridge: &[u8]) -> Self {
         Cpu {
             reg: Registers::new(),
-            pc: 0x100,
-            mem: MemoryBus::new(cartridge, false),
+            pc: 0x000,
+            mem: MemoryBus::new(cartridge, true),
             sp: 0xFFFF,
             is_halted: false,
             is_stopped: false,
@@ -229,7 +230,7 @@ impl Cpu {
                 }
 
                 if ith_bit(control, LcdControl::ObjectEnable as u8) {
-                    //                    self.render_sprites();
+                                        self.render_sprites();
                 }
             } else if line == 144 {
                 self.request_interrupt(Interrupt::VBlank);
@@ -251,16 +252,10 @@ impl Cpu {
             };
 
             // The Background Tile Map stores a 32x32 tile grid with corresponding tile numbers (one byte each).
-            let tile_num_base = if ith_bit(control, map_select_bit) {
-                0x9C00
-            } else {
-                0x9800
-            };
+            let tile_num_base = if ith_bit(control, map_select_bit) { 0x9C00 } else { 0x9800 };
             let tile_num_address = tile_num_base + row as u16 * 32 + col as u16;
 
-            let _bg_tile_map = self.mem.raw_memory
-                [tile_num_base as usize..tile_num_base as usize + 32 * 32]
-                .to_vec();
+            let _bg_tile_map = self.mem.raw_memory [tile_num_base as usize..tile_num_base as usize + 32 * 32] .to_vec();
 
             self.mem.read(tile_num_address)
         };
