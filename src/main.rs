@@ -3,14 +3,14 @@ use std::io::Read;
 use std::thread::sleep;
 use std::time::*;
 
-use minifb::{Key, Window, WindowOptions, Scale};
+use minifb::{Key, Scale, Window, WindowOptions};
 
 mod cpu;
 mod instructions;
 mod memory_bus;
 mod util;
 mod registers;
-//mod serial;
+mod joypad;
 
 const ONE_SECOND_IN_MICROS: usize = 1000000000;
 const ONE_SECOND_IN_CYCLES: usize = 4190000;
@@ -46,6 +46,8 @@ fn main() {
 
 //        let file_path = std::path::Path::new("/home/dingari/vblank_stat_intr-C.gb");
 
+    let mut prev_keys = [false; 8];
+
     println!("{:?}", file_path);
     let mut file = File::open(file_path).expect("There was an issue opening the file");
     let mut buffer = Vec::new();
@@ -57,14 +59,13 @@ fn main() {
         "DMG-01",
         WINDOW_DIMENSIONS[0],
         WINDOW_DIMENSIONS[1],
-        WindowOptions{
+        WindowOptions {
             borderless: false,
             title: false,
             resize: false,
             scale: Scale::X2,
-        }
-    )
-        .unwrap();
+        },
+    ).unwrap();
 
     let mut cycles_elapsed_in_frame = 0usize;
     let mut now = Instant::now();
@@ -73,12 +74,32 @@ fn main() {
         now = Instant::now();
         let delta = time_delta as f64 / ONE_SECOND_IN_MICROS as f64;
 
+        let cur_keys = [
+            window.is_key_down(Key::Key0),
+            window.is_key_down(Key::Key1),
+            window.is_key_down(Key::Key2),
+            window.is_key_down(Key::Key3),
+            window.is_key_down(Key::Key4),
+            window.is_key_down(Key::Key5),
+            window.is_key_down(Key::Key6),
+            window.is_key_down(Key::Key7)
+        ];
+
+        prev_keys.iter().zip(cur_keys.iter()).enumerate().for_each(|(i, (prev, cur))|
+            match (cur, prev) {
+                (true, false) => cpu.key_down(joypad::Key::from(i)),
+                (false, true) => cpu.key_up(joypad::Key::from(i)),
+                _ => {}
+            }
+        );
+
+        prev_keys = cur_keys;
+
         let cycles_elapsed = cpu.cycle(delta) as usize;
         cycles_elapsed_in_frame += cycles_elapsed;
 
         // TODO: Consider updating buffer after every line is rendered.
         if cycles_elapsed_in_frame >= ONE_FRAME_IN_CYCLES {
-
             window.update_with_buffer(&cpu.display).unwrap();
             cycles_elapsed_in_frame = 0;
         } else {
@@ -86,3 +107,4 @@ fn main() {
         }
     }
 }
+

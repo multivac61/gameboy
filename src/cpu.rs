@@ -2,6 +2,7 @@ use crate::instructions::Instruction;
 use crate::instructions::Instruction::*;
 use crate::memory_bus::MemoryBus;
 use crate::registers::{ConditionalFlag::*, Flags, Register, Register16bit, Registers};
+use crate::joypad::Key;
 use crate::util::{ith_bit, little_endian};
 
 pub const VIDEO_WIDTH: u32 = 160;
@@ -138,6 +139,18 @@ impl Cpu {
             divider_counter: 0,
             display: [0; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
         }
+    }
+
+    pub fn key_up(&mut self, key: Key) {
+        self.mem.joypad.key_up(key);
+        println!("key_up: {:?}", key);
+    }
+
+    pub fn key_down(&mut self, key: Key) {
+        self.mem.joypad.key_down(key);
+        println!("key_down: {:?}", key);
+
+        self.request_interrupt(Interrupt::Joypad);
     }
 
     fn update_timers(&mut self, cycles: u8) {
@@ -414,7 +427,7 @@ impl Cpu {
         let mut cur_num_cycles = 0;
 
         while cur_num_cycles < total_cycles {
-            let program_cycles = if (!self.is_halted) {
+            let program_cycles = if !self.is_halted {
                 #[cfg(debug_assertions)]
                 println!("{:?}", self);
 
