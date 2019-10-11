@@ -3,7 +3,7 @@ use std::io::Read;
 use std::thread::sleep;
 use std::time::*;
 
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, Window, WindowOptions, Scale};
 
 mod cpu;
 mod instructions;
@@ -57,11 +57,15 @@ fn main() {
         "DMG-01",
         WINDOW_DIMENSIONS[0],
         WINDOW_DIMENSIONS[1],
-        WindowOptions::default(),
+        WindowOptions{
+            borderless: false,
+            title: false,
+            resize: false,
+            scale: Scale::X2,
+        }
     )
-    .unwrap();
+        .unwrap();
 
-    let mut framebuffer = vec![0u32; WINDOW_DIMENSIONS[0] * WINDOW_DIMENSIONS[1]];
     let mut cycles_elapsed_in_frame = 0usize;
     let mut now = Instant::now();
     while window.is_open() && !window.is_key_down(Key::Escape) {
@@ -74,11 +78,8 @@ fn main() {
 
         // TODO: Consider updating buffer after every line is rendered.
         if cycles_elapsed_in_frame >= ONE_FRAME_IN_CYCLES {
-            for (i, pixel) in cpu.display.iter().enumerate() {
-                framebuffer[i] = *pixel;
-            }
 
-            window.update_with_buffer(&framebuffer).unwrap();
+            window.update_with_buffer(&cpu.display).unwrap();
             cycles_elapsed_in_frame = 0;
         } else {
             sleep(Duration::from_nanos(2))
