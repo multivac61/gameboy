@@ -125,11 +125,11 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(cartridge: &[u8]) -> Self {
+    pub fn new(cartridge: &[u8], enable_boot_rom: bool) -> Self {
         Cpu {
             reg: Registers::new(),
-            pc: 0x000,
-            mem: MemoryBus::new(cartridge, true),
+            pc: if enable_boot_rom { 0x000 } else { 0x100 },
+            mem: MemoryBus::new(cartridge, enable_boot_rom),
             sp: 0xFFFF,
             is_halted: false,
             is_stopped: false,
@@ -2521,7 +2521,7 @@ mod test
 
     fn make_test_cpu() -> Cpu {
         let cartridge = [0u8; 0x8000];
-        Cpu::new(&cartridge)
+        Cpu::new(&cartridge, false)
     }
 
     #[test]
