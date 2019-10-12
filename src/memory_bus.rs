@@ -1,9 +1,12 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{BOOT_ROM_ENABLE_REGISTER, DIV, DMA, MemoryAddress, OAM, P1, TIMA, TAC, TMA};
+use crate::cpu::{BOOT_ROM_ENABLE_REGISTER, DIV, DMA, MemoryAddress, OAM, P1, TAC, TIMA, TMA};
 use crate::joypad::Joypad;
-use crate::util::{little_endian, ith_bit};
+use crate::timer::Timer;
+use crate::util::little_endian;
+
+const TAC_ENABLE_BIT: u8 = 4;
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
 // 4000-7FFF 16KB ROM Bank 01..NN (in cartridge, switchable bank number)
@@ -35,8 +38,11 @@ pub struct MemoryBus {
     should_enable_ram: bool,
     is_boot_rom_enabled: bool,
     pub joypad: Joypad,
-    divider_counter: u16,
-    timer_counter: i64,
+    timer: Timer,
+    timer_counter: u16,
+    prev_bit_state: bool,
+    cycles_till_reload_tima: u8,
+    should_reload_tima: bool,
 }
 
 impl MemoryBus {
@@ -75,7 +81,10 @@ impl MemoryBus {
             is_boot_rom_enabled: enable_boot_rom,
             joypad: Joypad::new(),
             timer_counter: 0,
-            divider_counter: 0,
+            prev_bit_state: false,
+            cycles_till_reload_tima: 0,
+            should_reload_tima: false,
+            timer: Timer::new()
         }
     }
 
@@ -175,15 +184,11 @@ impl MemoryBus {
             }
             0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
             P1 => self.joypad.set_state(data),
-            0xFF01 => print!("{}", data as char),
-//            TAC => {
-//
-//            }Vkk
-            DIV => {
-                self.raw_memory[DIV as usize] = 0;
-                self.divider_counter = 0;
-                self.timer_counter = 0;
-            }
+//            0xFF01 => print!("{}", data as char),
+            DIV => self.timer.write_div(data),
+            TIMA => self.timer.tima = data,
+            TAC => self.timer.tac = data,
+            TMA => self.timer.tma = data,
             DMA => {
                 let source = little_endian::u16(0, data) as usize;
                 self.raw_memory
@@ -214,6 +219,10 @@ impl MemoryBus {
                 self.ram_banks[address as usize - 0xA000 + 0x2000 * self.ram_bank as usize]
             }
             P1 => self.joypad.get_state(),
+            DIV => self.timer.read_div(),
+            TIMA => self.timer.tima,
+            TAC => self.timer.tac,
+            TMA => self.timer.tma,
             _ => self.raw_memory[address as usize],
         }
     }
@@ -222,39 +231,60 @@ impl MemoryBus {
         &self.raw_memory[address as usize..address as usize + size]
     }
 
-    pub fn update_timers(&mut self, cycles: u8) -> bool {
-        self.divider_counter += u16::from(cycles);
-        while self.divider_counter >= 255 {
-            self.divider_counter -= 255;
-            self.raw_memory[DIV as usize] = self.raw_memory[DIV as usize].wrapping_add(1);
-        }
+    fn cycle_timer(&mut self) -> bool {
+        self.timer_counter = self.timer_counter.wrapping_add(1);
 
-        let mut interrupt = false;
-        let is_clock_enabled = ith_bit(self.read(TAC), 2);
-        if is_clock_enabled {
-            self.timer_counter += i64::from(cycles);
-
-            let threshold = match self.read(TAC) & 0b11 {
-                0 => 1024,
-                1 => 16,
-                2 => 64,
-                3 => 256,
+        let bit = if self.read(TAC) & TAC_ENABLE_BIT != 0 {
+            match self.read(TAC) & 0b11 {
+                0 => 1024 / 2,
+                1 => 16 / 2,
+                2 => 64 / 2,
+                3 => 256 / 2,
                 _ => unreachable!(),
-            };
+            }
+        } else {
+            0
+        };
 
-            while self.timer_counter >= threshold {
-                self.timer_counter -= threshold;
+        if self.should_reload_tima && self.cycles_till_reload_tima > 0 {
+            self.cycles_till_reload_tima -= 1;
 
-                let (counter, did_overflow) = match self.read(TIMA).checked_add(1) {
-                    Some(counter) => (counter, false),
-                    None => (self.read(TMA), true)
-                };
-
-                self.raw_memory[TIMA as usize] = counter;
-                interrupt |= did_overflow;
+            if self.cycles_till_reload_tima == 0 {
+                self.raw_memory[TIMA as usize] = self.read(TMA);
+                self.should_reload_tima = false;
             }
         }
 
-        interrupt
+        let bit_state = self.timer_counter & bit != 0;
+
+        let needs_interrupt = if self.prev_bit_state && !bit_state {
+            let (counter, did_overflow) = match self.read(TIMA).checked_add(1) {
+                Some(counter) => (counter, false),
+                None => {
+                    self.should_reload_tima = true;
+                    self.cycles_till_reload_tima = 4;
+                    (0, true)
+                }
+            };
+            self.raw_memory[TIMA as usize] = counter;
+
+            did_overflow
+        } else {
+            false
+        };
+
+        self.prev_bit_state = bit_state;
+        needs_interrupt
+    }
+
+    pub fn update_timers(&mut self, cycles: u8) -> bool {
+        self.timer.irq = 0;
+        self.timer.update(cycles.into());
+        self.timer.irq > 0
+//        let mut needs_interrupt = false;
+//        for _ in 0..cycles {
+//            needs_interrupt |= self.cycle_timer();
+//        }
+//        needs_interrupt
     }
 }

@@ -395,7 +395,6 @@ impl Cpu {
                 return 16;
             }
         }
-
         0
     }
 
@@ -416,7 +415,7 @@ impl Cpu {
             };
 
             let interrupt_cycles = self.do_interrupts();
-            let cycles = (program_cycles + interrupt_cycles);
+            let cycles = program_cycles + interrupt_cycles;
             if self.mem.update_timers(cycles) {
                 self.request_interrupt(Interrupt::Timer)
             }
@@ -1093,7 +1092,7 @@ impl Cpu {
                 let address = self.reg.read_word(Register16bit::HL);
                 let val = self.alu_shift_left(self.mem.read(address));
                 self.mem.write(address, val);
-                8
+                16
             }
             //sra  r         CB 2x        8 z00c shift right arithmetic (b7=b7)
             //srl  r         CB 3x        8 z00c shift right logical (b7=0)
@@ -2495,7 +2494,7 @@ impl fmt::Debug for Cpu {
 mod test
 {
     use crate::cpu::Cpu;
-    use crate::registers::{Register, Register16bit, Flags, ConditionalFlag};
+    use crate::registers::{Register, Flags};
     use crate::registers::ConditionalFlag::*;
 
     fn make_test_cpu() -> Cpu {

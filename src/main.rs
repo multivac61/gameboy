@@ -11,6 +11,7 @@ mod memory_bus;
 mod util;
 mod registers;
 mod joypad;
+mod timer;
 
 const ONE_SECOND_IN_MICROS: usize = 1000000000;
 const ONE_SECOND_IN_CYCLES: usize = 4190000;
