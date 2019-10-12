@@ -1,9 +1,9 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{BOOT_ROM_ENABLE_REGISTER, DIV, DMA, MemoryAddress, OAM, P1};
+use crate::cpu::{BOOT_ROM_ENABLE_REGISTER, DIV, DMA, MemoryAddress, OAM, P1, TIMA, TAC, TMA};
 use crate::joypad::Joypad;
-use crate::util::little_endian;
+use crate::util::{little_endian, ith_bit};
 
 // 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
 // 4000-7FFF 16KB ROM Bank 01..NN (in cartridge, switchable bank number)
@@ -35,6 +35,8 @@ pub struct MemoryBus {
     should_enable_ram: bool,
     is_boot_rom_enabled: bool,
     pub joypad: Joypad,
+    divider_counter: u16,
+    timer_counter: i64,
 }
 
 impl MemoryBus {
@@ -72,6 +74,8 @@ impl MemoryBus {
             should_enable_ram: false,
             is_boot_rom_enabled: enable_boot_rom,
             joypad: Joypad::new(),
+            timer_counter: 0,
+            divider_counter: 0,
         }
     }
 
@@ -172,7 +176,14 @@ impl MemoryBus {
             0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
             P1 => self.joypad.set_state(data),
             0xFF01 => print!("{}", data as char),
-            DIV => self.raw_memory[DIV as usize] = 0,
+//            TAC => {
+//
+//            }Vkk
+            DIV => {
+                self.raw_memory[DIV as usize] = 0;
+                self.divider_counter = 0;
+                self.timer_counter = 0;
+            }
             DMA => {
                 let source = little_endian::u16(0, data) as usize;
                 self.raw_memory
@@ -207,7 +218,43 @@ impl MemoryBus {
         }
     }
 
-    pub fn read_slice(&self, address: MemoryAddress, size: usize) -> &[u8]{
-        &self.raw_memory[address as usize .. address as usize + size]
+    pub fn read_slice(&self, address: MemoryAddress, size: usize) -> &[u8] {
+        &self.raw_memory[address as usize..address as usize + size]
+    }
+
+    pub fn update_timers(&mut self, cycles: u8) -> bool {
+        self.divider_counter += u16::from(cycles);
+        while self.divider_counter >= 255 {
+            self.divider_counter -= 255;
+            self.raw_memory[DIV as usize] = self.raw_memory[DIV as usize].wrapping_add(1);
+        }
+
+        let mut interrupt = false;
+        let is_clock_enabled = ith_bit(self.read(TAC), 2);
+        if is_clock_enabled {
+            self.timer_counter += i64::from(cycles);
+
+            let threshold = match self.read(TAC) & 0b11 {
+                0 => 1024,
+                1 => 16,
+                2 => 64,
+                3 => 256,
+                _ => unreachable!(),
+            };
+
+            while self.timer_counter >= threshold {
+                self.timer_counter -= threshold;
+
+                let (counter, did_overflow) = match self.read(TIMA).checked_add(1) {
+                    Some(counter) => (counter, false),
+                    None => (self.read(TMA), true)
+                };
+
+                self.raw_memory[TIMA as usize] = counter;
+                interrupt |= did_overflow;
+            }
+        }
+
+        interrupt
     }
 }

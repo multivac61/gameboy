@@ -21,10 +21,12 @@ const ENLARGEMENT_FACTOR: usize = 1;
 const WINDOW_DIMENSIONS: [usize; 2] = [(160 * ENLARGEMENT_FACTOR), (144 * ENLARGEMENT_FACTOR)];
 
 fn main() {
+    let file_name = std::env::args().nth(1);
     let file_path = std::env::current_dir()
         .unwrap()
-        .join(std::path::Path::new("src"))
-        .join(std::path::Path::new("Tetris.gb"));
+        .join(file_name.unwrap());
+//        .join(std::path::Path::new("src"))
+//        .join(std::path::Path::new("Tetris.gb"));
 //        .join(std::path::Path::new("Dr. Mario (World).gb"));
 //        .join(std::path::Path::new(".."))
 //        .join(std::path::Path::new("gb-test-roms"))

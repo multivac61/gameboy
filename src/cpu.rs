@@ -118,9 +118,7 @@ pub struct Cpu {
     is_halted: bool,
     is_stopped: bool,
     are_interrupts_enabled: bool,
-    timer_counter: i64,
     scan_counter: i64,
-    divider_counter: u16,
     pub display: [u32; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
 }
 
@@ -134,9 +132,7 @@ impl Cpu {
             is_halted: false,
             is_stopped: false,
             are_interrupts_enabled: false,
-            timer_counter: 1024,
             scan_counter: 0,
-            divider_counter: 0,
             display: [0; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
         }
     }
@@ -151,38 +147,6 @@ impl Cpu {
         println!("key_down: {:?}", key);
 
         self.request_interrupt(Interrupt::Joypad);
-    }
-
-    fn update_timers(&mut self, cycles: u8) {
-        self.divider_counter += u16::from(cycles);
-        if self.divider_counter >= 255 {
-            self.divider_counter = 0;
-            self.mem.write(DIV, self.mem.read(DIV).wrapping_add(1));
-        }
-
-        let is_clock_enabled = ith_bit(self.mem.read(TAC), 2);
-        if is_clock_enabled {
-            self.timer_counter -= i64::from(cycles);
-
-            if self.timer_counter <= 0 {
-                let timer_mod = match self.mem.read(TAC) & 0b11 {
-                    0 => 1024,
-                    1 => 16,
-                    2 => 64,
-                    3 => 256,
-                    _ => unreachable!(),
-                };
-
-                self.timer_counter %= timer_mod;
-
-                if self.mem.read(TIMA) == 0xFF {
-                    self.mem.write(TIMA, self.mem.read(TMA));
-                    self.request_interrupt(Interrupt::Timer);
-                } else {
-                    self.mem.write(TIMA, self.mem.read(TIMA).wrapping_add(1));
-                }
-            }
-        }
     }
 
     fn update_graphics(&mut self, cycles: u8) {
@@ -453,7 +417,9 @@ impl Cpu {
 
             let interrupt_cycles = self.do_interrupts();
             let cycles = (program_cycles + interrupt_cycles);
-            self.update_timers(cycles);
+            if self.mem.update_timers(cycles) {
+                self.request_interrupt(Interrupt::Timer)
+            }
             self.update_graphics(cycles);
 
             cur_num_cycles += cycles as u64;
