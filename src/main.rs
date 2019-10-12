@@ -63,7 +63,7 @@ fn main() {
             borderless: false,
             title: false,
             resize: false,
-            scale: Scale::X2,
+            scale: Scale::X4,
         },
     ).unwrap();
 

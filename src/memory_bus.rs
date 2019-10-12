@@ -206,4 +206,8 @@ impl MemoryBus {
             _ => self.raw_memory[address as usize],
         }
     }
+
+    pub fn read_slice(&self, address: MemoryAddress, size: usize) -> &[u8]{
+        &self.raw_memory[address as usize .. address as usize + size]
+    }
 }

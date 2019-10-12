@@ -243,7 +243,7 @@ impl Cpu {
                 }
 
                 if ith_bit(control, LcdControl::ObjectEnable as u8) {
-                                        self.render_sprites();
+                    self.render_sprites(line);
                 }
             } else if line == 144 {
                 self.request_interrupt(Interrupt::VBlank);
@@ -268,7 +268,7 @@ impl Cpu {
             let tile_num_base = if ith_bit(control, map_select_bit) { 0x9C00 } else { 0x9800 };
             let tile_num_address = tile_num_base + row as u16 * 32 + col as u16;
 
-            let _bg_tile_map = self.mem.raw_memory [tile_num_base as usize..tile_num_base as usize + 32 * 32] .to_vec();
+            let _bg_tile_map = self.mem.raw_memory[tile_num_base as usize..tile_num_base as usize + 32 * 32].to_vec();
 
             self.mem.read(tile_num_address)
         };
@@ -336,7 +336,7 @@ impl Cpu {
         }
     }
 
-    fn render_sprites(&mut self) {
+    fn render_sprites(&mut self, scan_line: u8) {
         let control = self.mem.read(LCDC);
 
         let y_size = if ith_bit(control, LcdControl::ObjectSize as u8) {
@@ -345,40 +345,53 @@ impl Cpu {
             8
         };
 
-        // sprite occupies 4 bytes in the sprite attributes table
+        struct Sprite {
+            x: u8,
+            y: u8,
+            pattern: u8,
+            priority: bool,
+            x_flip: bool,
+            y_flip: bool,
+            palette: MemoryAddress,
+        };
+
+        impl Sprite {
+            pub fn new(bytes: &[u8]) -> Self {
+                Sprite {
+                    x: bytes[1].wrapping_sub(8),
+                    y: bytes[0].wrapping_sub(16),
+                    pattern: bytes[2],
+                    priority: ith_bit(bytes[3], 7),
+                    x_flip: ith_bit(bytes[3], 5),
+                    y_flip: ith_bit(bytes[3], 6),
+                    palette: if ith_bit(bytes[3], 4) { OBP1 } else { OBP0 },
+                }
+            }
+        };
+
         const NUM_SPRITES: u16 = 40;
         for i in (0..4 * NUM_SPRITES as u16).step_by(4) {
-            let (x_pos, y_pos) = (self.mem.read(OAM + i + 1) - 8, self.mem.read(OAM + i) - 16);
-            let (tile_location, attribute) =
-                (self.mem.read(OAM + i + 2), self.mem.read(OAM + i + 3));
-            let (x_flip, y_flip) = (ith_bit(attribute, 5), ith_bit(attribute, 6));
+            let sprite = Sprite::new(self.mem.read_slice(OAM + i, 4));
 
-            let scan_line = self.mem.read(LY);
-
-            let does_sprite_intercept_line = scan_line >= y_pos && (scan_line < (y_pos + y_size));
+            let does_sprite_intercept_line = scan_line >= sprite.y && (scan_line < (sprite.y + y_size));
             if does_sprite_intercept_line {
-                let line = 2 * if y_flip {
-                    -(scan_line as i16 - y_pos as i16 - y_size as i16)
+                let line = 2 * if sprite.y_flip {
+                    -(scan_line as i16 - sprite.y as i16 - y_size as i16)
                 } else {
-                    scan_line as i16 - y_pos as i16
+                    scan_line as i16 - sprite.y as i16
                 };
 
-                let address = ((0x8000 + (tile_location as i32 * 16)) + line as i32) as u16;
+                let address = 0x8000 + sprite.pattern as u16 * 16 + line as u16;
                 let (data2, data1) = little_endian::u8(self.mem.read_word(address));
 
                 for pixel in 0..=7 {
-                    let pixel_bit = if x_flip { pixel } else { 7 - pixel };
-
-                    let color_num =
-                        ((ith_bit(data2, pixel_bit) as u8) << 1) | ith_bit(data1, pixel_bit) as u8;
-
-                    let color_address = if ith_bit(attribute, 4) { OBP1 } else { OBP0 };
-
-                    let c = self.get_color(color_num, color_address) as u32;
+                    let pixel_bit = if sprite.x_flip { pixel } else { 7 - pixel };
+                    let color_num = ((ith_bit(data2, pixel_bit) as u8) << 1) | ith_bit(data1, pixel_bit) as u8;
+                    let c = self.get_color(color_num, sprite.palette) as u32;
 
                     // white is transparent
                     if c != (WHITE as u32) {
-                        self.display[line as usize * 160 + x_pos as usize + pixel as usize] =
+                        self.display[scan_line as usize * 160 + sprite.x as usize + pixel as usize] =
                             (0xff << 24) | (c << 16) | (c << 8) | c;
                     }
                 }
