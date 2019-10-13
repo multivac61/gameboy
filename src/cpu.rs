@@ -69,6 +69,17 @@ impl std::convert::From<u8> for Lcd {
     }
 }
 
+impl std::convert::From<Lcd> for u8 {
+    fn from(l: Lcd) -> u8 {
+        match l {
+            Lcd::HBlank => 0,
+            Lcd::VBlank => 1,
+            Lcd::SearchingRam => 2,
+            Lcd::TransferringDataToDriver => 3,
+        }
+    }
+}
+
 pub enum LcdControl {
     //Bit 7 - LCD Display Enable (0=Off, 1=On)
     //Bit 6 - Window Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
@@ -192,7 +203,7 @@ impl Cpu {
             status & !(1 << 2)
         };
 
-        self.mem.write(STAT, new_status);
+        self.mem.write(STAT, set_mode_bits(new_status, new_mode));
 
         self.scan_counter -= i64::from(cycles);
 
