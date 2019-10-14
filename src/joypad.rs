@@ -96,8 +96,11 @@ impl Joypad {
         }
     }
 
-    pub fn set_state(&mut self, new_state: u8) {
-        self.register_state = new_state & 0x30;
+    pub fn write(&mut self, address: MemoryAddress, new_state: u8) {
+        match address {
+            P1 => self.register_state = new_state & 0x30,
+            _=> unreachable!()
+        };
     }
 }
 
@@ -109,19 +112,19 @@ mod test {
     fn key_down() {
         let mut jp = Joypad::new();
 
-        assert_eq!(jp.read(), 0b0011_1111);
-        jp.set_state(0b0001_0000);
+        assert_eq!(jp.read(0xFF00), 0b0011_1111);
+        jp.write(0xFF00, 0b0001_0000);
         jp.key_down(Key::A);
-        assert_eq!(jp.read(), 0b0001_1110);
+        assert_eq!(jp.read(0xFF00), 0b0001_1110);
 
         jp.key_up(Key::A);
-        assert_eq!(jp.read(), 0b0001_1111);
+        assert_eq!(jp.read(0xFF00), 0b0001_1111);
 
-        jp.set_state(0b0010_0000);
+        jp.write(0xFF00, 0b0010_0000);
         jp.key_down(Key::Right);
-        assert_eq!(jp.read(), 0b0010_1110);
+        assert_eq!(jp.read(0xFF00), 0b0010_1110);
 
         jp.key_up(Key::Right);
-        assert_eq!(jp.read(), 0b0010_1111);
+        assert_eq!(jp.read(0xFF00), 0b0010_1111);
     }
 }

@@ -3,14 +3,18 @@ use crate::cpu::MemoryAddress;
 pub const START: MemoryAddress = 0xFF01;
 pub const END: MemoryAddress = 0xFF02;
 
-struct Serial {}
+pub struct Serial {}
 
 impl Serial {
-    pub fn read(&self, address: MemoryAddress) -> u8 {
+    pub fn new() -> Self {
+        Serial{}
+    }
+
+    pub fn read(&self, _address: MemoryAddress) -> u8 {
         unimplemented!()
     }
 
-    pub fn write(&mut self, address: MemoryAddress, data: u8) {
+    pub fn write(&mut self, _address: MemoryAddress, data: u8) {
         unimplemented!()
     }
 }

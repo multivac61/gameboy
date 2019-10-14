@@ -30,11 +30,11 @@ impl Apu {
         Apu { ram: vec![0; 100] }
     }
 
-    pub fn read(&self, address: MemoryAddress) -> u8 {
+    pub fn read(&self, _address: MemoryAddress) -> u8 {
         unimplemented!()
     }
 
-    pub fn write(&mut self, address: MemoryAddress, data: u8) {
+    pub fn write(&mut self, _address: MemoryAddress, _data: u8) {
         unimplemented!()
     }
 }

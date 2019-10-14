@@ -110,7 +110,7 @@ fn main() {
 
         // TODO: Consider updating buffer after every line is rendered.
         if cycles_elapsed_in_frame >= ONE_FRAME_IN_CYCLES {
-            window.update_with_buffer(&cpu.display).unwrap();
+            window.update_with_buffer(&cpu.mem.ppu.frame_buffer).unwrap();
             cycles_elapsed_in_frame = 0;
         } else {
             sleep(Duration::from_nanos(2))

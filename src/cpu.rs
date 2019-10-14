@@ -39,12 +39,11 @@ impl std::convert::From<u8> for Interrupt {
 pub struct Cpu {
     reg: Registers,
     pc: MemoryAddress,
-    mem: MemoryBus,
+    pub mem: MemoryBus,
     sp: MemoryAddress,
     is_halted: bool,
     is_stopped: bool,
     are_interrupts_enabled: bool,
-    scan_counter: i64,
 }
 
 impl Cpu {
@@ -57,7 +56,6 @@ impl Cpu {
             is_halted: false,
             is_stopped: false,
             are_interrupts_enabled: false,
-            scan_counter: 0,
         }
     }
 
@@ -2229,24 +2227,26 @@ impl Cpu {
 
 impl fmt::Debug for Cpu {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (instr, incr) = self.fetch();
-        let v = self.mem.raw_memory[self.pc as usize..self.pc as usize + incr as usize].to_vec();
-        let tabs = match v.len() {
-            0 => "",
-            1 => "\t\t\t",
-            2 => "\t\t",
-            3 => "\t",
-            _ => unreachable!(),
-        };
+//        let (instr, incr) = self.fetch();
+//        let v = self.mem.raw_memory[self.pc as usize..self.pc as usize + incr as usize].to_vec();
+//        let tabs = match v.len() {
+//            0 => "",
+//            1 => "\t\t\t",
+//            2 => "\t\t",
+//            3 => "\t",
+//            _ => unreachable!(),
+//        };
+//
+//        let stack_data: u16 = if self.sp >= 0xffff {
+//            0
+//        } else {
+//            self.mem.read_word(self.sp)
+//        };
+//
+//        write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
+//               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(0xFF44), instr)
 
-        let stack_data: u16 = if self.sp >= 0xffff {
-            0
-        } else {
-            self.mem.read_word(self.sp)
-        };
-
-        write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
-               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(0xFF44), instr)
+        write!(f, "")
     }
 }
 

@@ -75,7 +75,7 @@ impl Registers {
     }
 
     pub fn read_word(&self, r: Register16bit) -> u16 {
-        little_endian::u16(self.reg[r as usize + 1], self.reg[r as usize])
+        u16::from_be_bytes([self.reg[r as usize], self.reg[r as usize + 1]])
     }
 
     pub fn write(&mut self, r: Register, val: u8) {

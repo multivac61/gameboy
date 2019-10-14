@@ -1,8 +1,8 @@
 use crate::cpu::{Interrupt, MemoryAddress};
 use crate::util;
 
-const REG_START: MemoryAddress = 0xFF40;
-const REG_END: MemoryAddress = 0xFF4B;
+pub const REG_START: MemoryAddress = 0xFF40;
+pub const REG_END: MemoryAddress = 0xFF4B;
 
 pub const WIDTH: usize = 160;
 pub const HEIGHT: usize = 144;
@@ -10,9 +10,9 @@ pub const RAM_SIZE: usize = 0x2000;
 pub const OAM_SIZE: usize = 0xA0;
 
 pub const RAM_START: MemoryAddress = 0x8000;
-pub const RAM_END: MemoryAddress = RAM_START + RAM_SIZE as MemoryAddress;
+pub const RAM_END: MemoryAddress = RAM_START + RAM_SIZE as MemoryAddress - 1;
 pub const OAM_START: MemoryAddress = 0xFE00;
-pub const OAM_END: MemoryAddress = OAM_START + OAM_SIZE as MemoryAddress;
+pub const OAM_END: MemoryAddress = OAM_START + OAM_SIZE as MemoryAddress - 1;
 
 const LCDC: MemoryAddress = 0xFF40;
 const STAT: MemoryAddress = 0xFF41;
@@ -84,6 +84,7 @@ pub enum LcdControl {
 pub struct Ppu {
     ram: [u8; RAM_SIZE],
     oam: [u8; OAM_SIZE],
+    scan_counter: i64,
     lcdc: u8,
     stat: u8,
     scy: u8,
@@ -104,6 +105,7 @@ impl Ppu {
         Ppu {
             ram: [0; RAM_SIZE],
             oam: [0; OAM_SIZE],
+            scan_counter: 0,
             lcdc: 0x91,
             stat: 0,
             scy: 0,
@@ -120,20 +122,46 @@ impl Ppu {
     }
 
     pub fn read(&self, address: MemoryAddress) -> u8 {
-        self.ram[address as usize]
+        match address {
+            RAM_START..=RAM_END => self.ram[(address - RAM_START) as usize],
+            OAM_START..=OAM_END=> self.oam[(address - OAM_START) as usize],
+            LCDC => self.lcdc,
+            STAT => self.stat,
+            SCY => self.scy,
+            SCX => self.scx,
+            LY => self.ly,
+            LYC => self.lyc,
+
+            BGP => self.bgp,
+            OBP0 => self.obp0,
+            OBP1 => self.obp1,
+            WY => self.wy,
+            WX => self.wx,
+            _ => unreachable!()
+        }
     }
 
-    pub fn read_ram(&self, address: MemoryAddress) -> u8 {
-        self.ram[address as usize]
+    pub fn write(&mut self, address: MemoryAddress, data: u8) {
+        match address {
+            RAM_START..=RAM_END => self.ram[(address - RAM_START) as usize] = data,
+            OAM_START..=OAM_END => self.oam[(address - OAM_START) as usize] = data,
+            LCDC => self.lcdc = data,
+            STAT => self.stat = data,
+            SCY => self.scy = data,
+            SCX => self.scx = data,
+            LY => self.ly = data,
+            LYC => self.lyc = data,
+
+            BGP => self.bgp = data,
+            OBP0 => self.obp0 = data,
+            OBP1 => self.obp1 = data,
+            WY => self.wy = data,
+            WX => self.wx = data,
+            _ => unreachable!()
+        };
     }
 
-    pub fn write(&self, address: MemoryAddress) -> u8 {
-        self.ram[address as usize]
-    }
-
-    pub fn write_ram(&self, address: MemoryAddress) -> u8 {
-        self.ram[address as usize]
-    }
+    pub fn dma(&mut self, _chunk: &[u8]) { unimplemented!() }
 
     pub fn update(&mut self, cycles: u8) -> u8 {
         let mut interrupt = 0;
@@ -147,7 +175,8 @@ impl Ppu {
             self.ly = 0;
             let default_status = set_mode_bits(self.stat, Lcd::VBlank);
             self.stat = default_status;
-            interrupt
+
+            return interrupt;
         }
 
         let line = self.ly;
@@ -220,7 +249,7 @@ impl Ppu {
             } - RAM_START;
             let tile_num_address = tile_num_base + row as u16 * 32 + col as u16;
 
-            self.ram[tile_num_address]
+            self.ram[tile_num_address as usize]
         };
 
         // Tiles consist of 8x8 pixels. Each line of the tile occupies two bytes in memory (16 consecutive bytes total for any given tile).
@@ -236,7 +265,7 @@ impl Ppu {
         } - RAM_START;
 
         let address = (tile_address + (2 * (y % 8)) as u16) as usize;
-        u16::from_le_bytes(self.ram[address..address + 2])
+        u16::from_le_bytes([self.ram[address], self.ram[address + 1]])
     }
 
     fn render_tiles(&mut self, line: u8) {
@@ -246,7 +275,7 @@ impl Ppu {
         let is_window_enabled = util::ith_bit(self.lcdc, LcdControl::WindowDisplayEnable as u8);
         let is_window_visible = is_window_enabled && window_y <= line;
 
-        for x in 0..VIDEO_WIDTH as u8 {
+        for x in 0..WIDTH as u8 {
             let (x_pos, y_pos, tile_type) = if is_window_visible && x >= window_x {
                 (x - window_x, line - window_y, TileType::Window)
             } else {
@@ -265,7 +294,7 @@ impl Ppu {
                 | util::ith_bit(byte1, colour_bit_num) as u8;
 
             let c = self.get_color(color_num, self.bgp) as u32;
-            self.frame_buffer[line as usize * VIDEO_WIDTH as usize + x as usize] =
+            self.frame_buffer[line as usize * WIDTH as usize + x as usize] =
                 (0xff << 24) | (c << 16) | (c << 8) | c;
         }
     }
@@ -316,9 +345,9 @@ impl Ppu {
             }
         };
 
-        const NUM_SPRITES: u16 = 40;
-        for i in (0..4 * NUM_SPRITES as u16).step_by(4) {
-            let sprite = Sprite::new(self.oam[i..i + 4]);
+        const NUM_SPRITES: usize = 40;
+        for i in (0..4 * NUM_SPRITES).step_by(4) {
+            let sprite = Sprite::new(&self.oam[i..i + 4]);
 
             let does_sprite_intercept_line =
                 scan_line >= sprite.y && (scan_line < (sprite.y + y_size));
@@ -331,13 +360,15 @@ impl Ppu {
                 };
 
                 let address = sprite.pattern as u16 * 16 + line as u16;
-                let (data2, data1) = util::little_endian::u8(self.ram[address]);
+                let data1 = self.ram[address as usize];
+                let data2 = self.ram[address as usize + 1];
 
                 for pixel in 0..=7 {
                     let pixel_bit = if sprite.x_flip { pixel } else { 7 - pixel };
                     let color_num = ((util::ith_bit(data2, pixel_bit) as u8) << 1)
                         | util::ith_bit(data1, pixel_bit) as u8;
-                    let c = self.get_color(color_num, sprite.palette) as u32;
+                    let palette = if sprite.palette == OBP0 { self.obp0 } else { self.obp1 };
+                    let c = self.get_color(color_num, palette) as u32;
 
                     // white is transparent
                     if c != (WHITE as u32) {
@@ -348,8 +379,5 @@ impl Ppu {
                 }
             }
         }
-    }
-    pub fn dma(&mut self, chunk: &[u8]) {
-
     }
 }

@@ -79,16 +79,27 @@ impl Timer {
         self.cycle = 0;
     }
 
+    pub fn write(&mut self, address: MemoryAddress, value: u8) {
+        match address {
+            DIV => self.cycle = 0,
+            TIMA => self.tima = value,
+            TAC => self.tac = value,
+            TMA => self.tma = value,
+            _=> unreachable!()
+        };
+    }
+
     pub fn read(&self, address: MemoryAddress) -> u8 {
         match address {
             DIV => (self.cycle >> 8) as u8,
             TIMA => self.tima,
             TAC => self.tac,
             TMA => self.tma,
+            _ => unreachable!()
         }
     }
 
-    pub fn update(&mut self, cycles: u32) -> u8 {
+    pub fn update(&mut self, cycles: u8) -> u8 {
         for _ in 0..cycles {
             self.one_cycle();
         }
