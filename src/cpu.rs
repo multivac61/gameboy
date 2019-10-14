@@ -283,7 +283,7 @@ impl Cpu {
 
             let (byte2, byte1) = little_endian::u8(self.get_tile_data(x_pos, y_pos, tile_type));
 
-            let colour_bit_num = 7 - (x & 0b0111);
+            let colour_bit_num = 7 - (x_pos & 0b0111);
             let color_num = ((ith_bit(byte2, colour_bit_num) as u8) << 1)
                 | ith_bit(byte1, colour_bit_num) as u8;
 
