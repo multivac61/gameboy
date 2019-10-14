@@ -1,6 +1,12 @@
-// References:
-// http://gbdev.gg8.se/wiki/articles/Timer_and_Divider_Registers
-// http://gbdev.gg8.se/wiki/articles/Timer_Obscure_Behaviour
+use crate::cpu::MemoryAddress;
+
+pub const START: MemoryAddress = 0xFF04;
+pub const END: MemoryAddress = 0xFF07;
+
+pub const DIV: u16 = 0xFF04;
+pub const TIMA: u16 = 0xFF05;
+pub const TMA: u16 = 0xFF06;
+pub const TAC: u16 = 0xFF07;
 
 const CLOCK_SELECTION: [u16; 4] = [512, 8, 32, 128];
 
@@ -33,15 +39,15 @@ pub struct Timer {
     // 01: 262 144 Hz
     // 10: 65 536 Hz
     // 11: 16 384 Hz
-    pub tac: u8,
+    tac: u8,
 
     // TIMA register: timer counter
     // When TIMA overflows an interrupt is generated and
     // TIMA is reset to the value of TMA
-    pub tima: u8,
+    tima: u8,
 
     // TMA register: reset value of TIMA
-    pub tma: u8,
+    tma: u8,
 
     pub irq: u8,
 
@@ -73,14 +79,20 @@ impl Timer {
         self.cycle = 0;
     }
 
-    pub fn read_div(&self) -> u8 {
-        (self.cycle >> 8) as u8
+    pub fn read(&self, address: MemoryAddress) -> u8 {
+        match address {
+            DIV => (self.cycle >> 8) as u8,
+            TIMA => self.tima,
+            TAC => self.tac,
+            TMA => self.tma,
+        }
     }
 
-    pub fn update(&mut self, cycles: u32) {
+    pub fn update(&mut self, cycles: u32) -> u8 {
         for _ in 0..cycles {
             self.one_cycle();
         }
+        self.irq
     }
 
     fn x_one_cycle(&mut self) {

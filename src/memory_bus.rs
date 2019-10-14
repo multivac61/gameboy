@@ -1,323 +1,158 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::cpu::{BOOT_ROM_ENABLE_REGISTER, DIV, DMA, MemoryAddress, OAM, P1, TAC, TIMA, TMA};
-use crate::joypad::Joypad;
-use crate::timer::Timer;
-use crate::util::little_endian;
+use crate::apu::{self, Apu};
+use crate::cartridge::{self, Cartridge};
+use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER};
+use crate::hram::{self, Hram};
+use crate::joypad::{self, Joypad};
+use crate::ppu::{self, Ppu};
+use crate::ram::{self, Ram};
+use crate::serial::{self, Serial};
+use crate::timer::{self, Timer};
+use crate::util;
 
-const TAC_ENABLE_BIT: u8 = 4;
+const ROM_BANK_START: MemoryAddress = 0x0000;
+const ROM_BANK_END: MemoryAddress = ppu::RAM_START;
 
-// 0000-3FFF 16KB ROM Bank 00 (in cartridge, fixed at bank 00)
-// 4000-7FFF 16KB ROM Bank 01..NN (in cartridge, switchable bank number)
-// 8000-9FFF 8KB Video RAM (VRAM) (switchable bank 0-1 in CGB Mode)
-// A000-BFFF 8KB External RAM (in cartridge, switchable bank, if any)
-// C000-CFFF 4KB Work RAM Bank 0 (WRAM)
-// D000-DFFF 4KB Work RAM Bank 1 (WRAM) (switchable bank 1-7 in CGB Mode)
-// E000-FDFF Same as C000-DDFF (ECHO) (typically not used)
-// FE00-FE9F Sprite Attribute Table (OAM)
-// FEA0-FEFF Not Usable
-// FF00-FF7F I/O Ports
-// FF80-FFFE High RAM (HRAM)
-// FFFF Interrupt Enable Register
-
-enum MemoryBankType {
-    Local,
-    MBC1 { is_4mbit: bool },
-    MBC2,
-}
+const INTERRUPT_FLAG: MemoryAddress = 0xFF0F;
+const DMA: MemoryAddress = 0xFF46;
+const INTERRUPT_ENABLE: MemoryAddress = 0xFFFF;
 
 pub struct MemoryBus {
-    pub raw_memory: Vec<u8>,
     boot_rom: Vec<u8>,
-    cartridge: Vec<u8>,
-    ram_banks: Vec<u8>,
-    ram_bank: u8,
-    rom_type: MemoryBankType,
-    rom_bank: u8,
-    should_enable_ram: bool,
     is_boot_rom_enabled: bool,
+
+    cartridge: Cartridge,
+    ram: Ram,
+    pub ppu: Ppu,
+    hram: Hram,
+
     pub joypad: Joypad,
-    timer: Timer,
-    timer_counter: u16,
-    prev_bit_state: bool,
-    cycles_till_reload_tima: u8,
-    should_reload_tima: bool,
+    pub serial: Serial,
+    pub timer: Timer,
+
+    pub interrupt_flag: u8,
+    pub interrupt_enable: u8,
 }
 
 impl MemoryBus {
-    pub fn new(cartridge: &[u8], enable_boot_rom: bool) -> Self {
-        //        0100-014F contains the cartridge header
-        let mut m = vec![0; 0x10000];
-
-        m[0..0x4000].copy_from_slice(&cartridge[0..0x4000]);
-
+    pub fn new(game_rom: &[u8], enable_boot_rom: bool) -> Self {
         let file_path = std::env::current_dir()
             .unwrap()
             .join(std::path::Path::new("src"))
             .join(std::path::Path::new("DMG_ROM.bin"));
 
         let mut file = File::open(file_path).expect("There was an issue opening the file");
-        let mut buffer = Vec::new();
-        let _bytes_read = file.read_to_end(&mut buffer);
-        assert!(_bytes_read.unwrap() == 0x100);
-
-        let b = match cartridge[0x147] {
-            0 => MemoryBankType::Local,
-            1..=3 => MemoryBankType::MBC1 { is_4mbit: false },
-            5..=6 => MemoryBankType::MBC2,
-            _ => unreachable!(),
-        };
-
-        if !enable_boot_rom {
-            m[0xFF05] = 0x00;
-            m[0xFF06] = 0x00;
-            m[0xFF07] = 0x00;
-            m[0xFF10] = 0x80;
-            m[0xFF11] = 0xBF;
-            m[0xFF12] = 0xF3;
-            m[0xFF14] = 0xBF;
-            m[0xFF16] = 0x3F;
-            m[0xFF17] = 0x00;
-            m[0xFF19] = 0xBF;
-            m[0xFF1A] = 0x7F;
-            m[0xFF1B] = 0xFF;
-            m[0xFF1C] = 0x9F;
-            m[0xFF1E] = 0xBF;
-            m[0xFF20] = 0xFF;
-            m[0xFF21] = 0x00;
-            m[0xFF22] = 0x00;
-            m[0xFF23] = 0xBF;
-            m[0xFF24] = 0x77;
-            m[0xFF25] = 0xF3;
-            m[0xFF26] = 0xF1;
-            m[0xFF40] = 0x91;
-            m[0xFF42] = 0x00;
-            m[0xFF43] = 0x00;
-            m[0xFF45] = 0x00;
-            m[0xFF47] = 0xFC;
-            m[0xFF48] = 0xFF;
-            m[0xFF49] = 0xFF;
-            m[0xFF4A] = 0x00;
-            m[0xFF4B] = 0x00;
-            m[0xFFFF] = 0x00;
-        }
+        let mut boot_rom = Vec::new();
+        let _bytes_read = file.read_to_end(&mut boot_rom);
+        assert_eq!(_bytes_read.unwrap(), 0x100);
 
         MemoryBus {
-            raw_memory: m,
-            boot_rom: buffer,
-            cartridge: cartridge.to_vec(),
-            ram_banks: vec![0; 4 * 0x2000],
-            ram_bank: 0,
-            rom_type: b,
-            rom_bank: 1,
-            should_enable_ram: false,
+            boot_rom,
             is_boot_rom_enabled: enable_boot_rom,
+
+            cartridge: Cartridge::new(game_rom),
+            ram: Ram::new(),
+            ppu: Ppu::new(),
+            hram: Hram::new(),
+
             joypad: Joypad::new(),
-            timer_counter: 0,
-            prev_bit_state: false,
-            cycles_till_reload_tima: 0,
-            should_reload_tima: false,
-            timer: Timer::new()
+            timer: Timer::new(),
+
+            interrupt_flag: 0,
+            interrupt_enable: 0,
         }
     }
 
     pub fn write_word(&mut self, address: MemoryAddress, data: u16) {
-        self.write(address, (data & 0xFF) as u8);
-        self.write(address + 1, (data >> 8) as u8);
+        self.write(address, util::little_endian::lsb(data));
+        self.write(address + 1, util::little_endian::msb(data));
     }
 
     pub fn write(&mut self, address: MemoryAddress, data: u8) {
-        //        0000-3FFF   16KB ROM Bank 00     (in cartridge, fixed at bank 00)
-        //        4000-7FFF   16KB ROM Bank 01..NN (in cartridge, switchable bank number)
-        //        8000-9FFF   8KB Video RAM (VRAM) (switchable bank 0-1 in CGB Mode)
-        //        A000-BFFF   8KB External RAM     (in cartridge, switchable bank, if any)
-        //        C000-CFFF   4KB Work RAM Bank 0 (WRAM)
-        //        D000-DFFF   4KB Work RAM Bank 1 (WRAM)  (switchable bank 1-7 in CGB Mode)
-        //        E000-FDFF   Same as C000-DDFF (ECHO)    (typically not used)
-        //        FE00-FE9F   Sprite Attribute Table (OAM)
-        //        FEA0-FEFF   Not Usable
-        //        FF00-FF7F   I/O Ports
-        //        FF80-FFFE   High RAM (HRAM)
-        //        FFFF        Interrupt Enable Register0
+        // TODO: Refactor
         match address {
-            0x0000..=0x1FFF => {
-                self.should_enable_ram = match self.rom_type {
-                    MemoryBankType::Local => false,
-                    MemoryBankType::MBC1 { is_4mbit: false } => data & 0x0F == 0x0A,
-                    _ => unreachable!(),
-                };
-            }
-            0x2000..=0x3FFF => {
-                self.rom_bank = match self.rom_type {
-                    MemoryBankType::Local => 1,
-                    MemoryBankType::MBC1 { is_4mbit: _ } => match data {
-                        0..=1 => 1,
-                        _ => data & 0b0001_1111,
-                    },
-                    MemoryBankType::MBC2 => {
-                        // The least significant bit of the upper address
-                        // byte must be zero to enable/disable cart RAM.
-                        if (address >> 8) & 0x01 == 0x00 {
-                            self.should_enable_ram = true;
-                            self.rom_bank
-                        } else {
-                            // The least significant bit of the upper address
-                            // byte must be one to select a ROM bank.
-                            data & 0b0000_1111
-                        }
-                    }
-                };
-            }
-            0x4000..=0x5FFF => {
-                match self.rom_type {
-                    MemoryBankType::MBC1 { is_4mbit } => {
-                        if is_4mbit {
-                            // If memory model is set to 4/32:
-                            // Writing a value (XXXXXXBB - X = Don't care, B =
-                            // bank select bits) into 4000-5FFF area will select
-                            // an appropriate RAM bank at A000-C000.
-                            self.ram_bank = data & 0b0000_0011;
-                        } else {
-                            // If memory model is set to 16/8 mode:
-                            // Writing a value (XXXXXXBB - X = Don't care, B =
-                            // bank select bits) into 4000-5FFF area will set the
-                            // two most significant ROM address lines.
-                            self.rom_bank &= 0b0001_11111;
-                            self.rom_bank |= (data & 0b11) << 6;
-                        }
-                    }
-                    _ => unreachable!(),
-                };
-            }
-            0x6000..=0x7FFF => {
-                match self.rom_type {
-                    MemoryBankType::MBC1 { is_4mbit: _ } => {
-                        // 0: 16MBit ROM / 8KByte RAM
-                        // 1: 4Mbit ROM / 32KByte RAM
-                        self.rom_type = MemoryBankType::MBC1 {
-                            is_4mbit: data & 0x01 == 0x01,
-                        };
-                    }
-                    _ => unreachable!(),
-                };
-            }
-            0xA000..=0xBFFF => {
-                if self.should_enable_ram {
-                    let address = address as usize - 0xA000 + 0x2000 * self.ram_bank as usize;
-                    self.ram_banks[address] = data;
-                }
-            }
-            0xC000..=0xDDFF => {
-                self.raw_memory[address as usize] = data;
-                self.raw_memory[address as usize + (0xE000 - 0xC000)] = data;
-            }
-            0xE000..=0xFDFF => {
-                self.raw_memory[address as usize] = data;
-                self.raw_memory[address as usize - (0xE000 - 0xC000)] = data;
-            }
-            0xFEA0..=0xFEFE => self.write(address - 0x2000, data),
-            P1 => self.joypad.set_state(data),
-//            0xFF01 => print!("{}", data as char),
-            DIV => self.timer.write_div(data),
-            TIMA => self.timer.tima = data,
-            TAC => self.timer.tac = data,
-            TMA => self.timer.tma = data,
+            ROM_BANK_START..ROM_BANK_END => self.cartridge.write_rom(address, data),
+
+            ppu::RAM_START..ppu::RAM_END => self.ppu.write(address, data),
+
+            cartridge::RAM_START..cartridge::RAM_END => self.cartridge.write_ram(address, data),
+
+            ram::START..ram::ECHO_END => self.ram.write(address, data),
+
+            ppu::OAM_START..ppu::OAM_END => self.ppu.write(address, data),
+
+            JOY_PAD => self.joypad.write(address, data),
+
+            serial::START..serial::END => self.serial.write(address, data),
+
+            timer::START..timer::END => self.timer.write(address, data),
+
+            INTERRUPT_FLAG => self.interrupt_flag = data,
+
+            apu::START..apu::END => self.apu.write(address),
+
+            ppu::REG_START..ppu::REG_END => self.ppu.write(address),
+
+            hram::START..hram::END => self.hram.write(address),
+
+            INTERRUPT_ENABLE => self.interrupt_enable = data,
+
             DMA => {
-                let source = little_endian::u16(0, data) as usize;
+                let source = u16::from_le_bytes([0, data]) as usize;
                 self.raw_memory.copy_within(source..source + 0xA0, OAM as usize);
+                let chunk = self.
+                self.ppu.dma(chunk);
             }
+
             BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
-            _ => self.raw_memory[address as usize] = data,
+
+            _ => unreachable!(),
         }
     }
 
     pub fn read_word(&self, address: MemoryAddress) -> u16 {
-        little_endian::u16(self.read(address), self.read(address + 1))
+        u16::from_le_bytes([self.read(address), self.read(address + 1)])
     }
 
     pub fn read(&self, address: MemoryAddress) -> u8 {
+        if address < BOOT_ROM_END && self.is_boot_rom_enabled {
+            self.boot_rom[address as usize]
+        }
+
         match address {
-            0x0000..=0x00FF => {
-                if self.is_boot_rom_enabled {
-                    self.boot_rom[address as usize]
-                } else {
-                    self.raw_memory[address as usize]
-                }
-            }
-            0x4000..=0x7FFF => {
-                self.cartridge[address as usize - 0x4000 + 0x4000 * self.rom_bank as usize]
-            }
-            0xA000..=0xBFFF => {
-                self.ram_banks[address as usize - 0xA000 + 0x2000 * self.ram_bank as usize]
-            }
-            P1 => self.joypad.get_state(),
-            DIV => self.timer.read_div(),
-            TIMA => self.timer.tima,
-            TAC => self.timer.tac,
-            TMA => self.timer.tma,
-            _ => self.raw_memory[address as usize],
+            ROM_BANK_START..ROM_BANK_END => self.cartridge.read_rom(address),
+
+            ppu::RAM_START..ppu::RAM_END => self.ppu.read(address),
+
+            cartridge::RAM_START..cartridge::RAM_END => self.cartridge.read_ram(address),
+
+            ram::START..ram::ECHO_END => self.ram.read(address),
+
+            ppu::OAM_START..ppu::OAM_END => self.ppu.read(address),
+
+            JOY_PAD => self.joypad.read(address),
+
+            serial::START..serial::END => self.serial.read(address),
+
+            timer::START..timer::END => self.timer.read(address),
+
+            INTERRUPT_FLAG => self.interrupt_flag,
+
+            apu::START..apu::END => self.apu.read(address),
+
+            ppu::REG_START..ppu::REG_END => self.ppu.read(address),
+
+            hram::START..hram::END => self.hram.read(address),
+
+            INTERRUPT_ENABLE => self.interrupt_enable,
+
+            _ => unreachable!(),
         }
     }
 
-    pub fn read_slice(&self, address: MemoryAddress, size: usize) -> &[u8] {
-        &self.raw_memory[address as usize..address as usize + size]
-    }
-
-    fn cycle_timer(&mut self) -> bool {
-        self.timer_counter = self.timer_counter.wrapping_add(1);
-
-        let bit = if self.read(TAC) & TAC_ENABLE_BIT != 0 {
-            match self.read(TAC) & 0b11 {
-                0 => 1024 / 2,
-                1 => 16 / 2,
-                2 => 64 / 2,
-                3 => 256 / 2,
-                _ => unreachable!(),
-            }
-        } else {
-            0
-        };
-
-        if self.should_reload_tima && self.cycles_till_reload_tima > 0 {
-            self.cycles_till_reload_tima -= 1;
-
-            if self.cycles_till_reload_tima == 0 {
-                self.raw_memory[TIMA as usize] = self.read(TMA);
-                self.should_reload_tima = false;
-            }
-        }
-
-        let bit_state = self.timer_counter & bit != 0;
-
-        let needs_interrupt = if self.prev_bit_state && !bit_state {
-            let (counter, did_overflow) = match self.read(TIMA).checked_add(1) {
-                Some(counter) => (counter, false),
-                None => {
-                    self.should_reload_tima = true;
-                    self.cycles_till_reload_tima = 4;
-                    (0, true)
-                }
-            };
-            self.raw_memory[TIMA as usize] = counter;
-
-            did_overflow
-        } else {
-            false
-        };
-
-        self.prev_bit_state = bit_state;
-        needs_interrupt
-    }
-
-    pub fn update_timers(&mut self, cycles: u8) -> bool {
-        self.timer.irq = 0;
-        self.timer.update(cycles.into());
-        self.timer.irq > 0
-//        let mut needs_interrupt = false;
-//        for _ in 0..cycles {
-//            needs_interrupt |= self.cycle_timer();
-//        }
-//        needs_interrupt
+    pub fn update_timers(&mut self, cycles: u8) -> u8 {
+        self.timer.update(cycles.into())
     }
 }
