@@ -20,9 +20,9 @@ mod timer;
 mod util;
 
 const ONE_SECOND_IN_MICROS: usize = 1000000000;
-const ONE_SECOND_IN_CYCLES: usize = 4190000;
+//const ONE_SECOND_IN_CYCLES: usize = 4190000;
 const ONE_FRAME_IN_CYCLES: usize = 70224;
-const NUMBER_OF_PIXELS: usize = 23040;
+//const NUMBER_OF_PIXELS: usize = 23040;
 
 const ENLARGEMENT_FACTOR: usize = 1;
 const WINDOW_DIMENSIONS: [usize; 2] = [(160 * ENLARGEMENT_FACTOR), (144 * ENLARGEMENT_FACTOR)];
@@ -60,7 +60,7 @@ fn main() {
     let mut buffer = Vec::new();
     let _bytes_read = file.read_to_end(&mut buffer);
 
-    let mut cpu = cpu::Cpu::new(buffer.as_slice(), false);
+    let mut cpu = cpu::Cpu::new(buffer.as_slice(), true);
 
     let mut window = Window::new(
         "DMG-01",

@@ -115,7 +115,7 @@ impl MemoryBus {
 
             BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
 
-            _ => unreachable!(),
+            _ => println!("Tried to write address {:#x}: {:#x}", address, data),
         };
     }
 
@@ -125,7 +125,7 @@ impl MemoryBus {
 
     pub fn read(&self, address: MemoryAddress) -> u8 {
         if address < BOOT_ROM_END && self.is_boot_rom_enabled {
-            self.boot_rom[address as usize];
+            return self.boot_rom[address as usize];
         }
 
         match address {

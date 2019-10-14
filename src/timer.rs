@@ -73,12 +73,6 @@ impl Timer {
         }
     }
 
-    pub fn write_div(&mut self, value: u8) {
-        // Value is ignored: no matter what value is written
-        // the cycle counter is always reset to zero
-        self.cycle = 0;
-    }
-
     pub fn write(&mut self, address: MemoryAddress, value: u8) {
         match address {
             DIV => self.cycle = 0,

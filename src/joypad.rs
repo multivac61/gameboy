@@ -1,9 +1,7 @@
 use crate::cpu::MemoryAddress;
 use crate::util;
 
-pub const P1: u16 = 0xFF00;
-
-const JOYPAD: MemoryAddress = 0xFF00;
+pub const P1: MemoryAddress = 0xFF00;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Key {

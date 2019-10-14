@@ -3,7 +3,7 @@ use crate::cpu::MemoryAddress;
 pub const START: MemoryAddress = 0xFF80;
 pub const END: MemoryAddress = 0xFFFE;
 
-const SIZE: usize = (END - START) as usize;
+const SIZE: usize = (END - START) as usize + 1;
 
 pub struct Hram {
     hram: [u8; SIZE],

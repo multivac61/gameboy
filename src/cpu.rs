@@ -70,11 +70,6 @@ impl Cpu {
         self.is_halted = false;
     }
 
-    fn request_interrupt(&mut self, interrupt: Interrupt) {
-        self.mem.interrupt_flag = util::set_bit(self.mem.interrupt_flag, interrupt as u8);
-        self.is_halted = false;
-    }
-
     fn do_interrupts(&mut self) -> u8 {
         let is_requested = self.mem.read(INTERRUPT_REQUEST_REGISTER);
         let is_enabled = self.mem.read(INTERRUPT_ENABLE_REGISTER);
@@ -127,7 +122,9 @@ impl Cpu {
 
             self.mem.interrupt_flag |= self.mem.ppu.update(cycles);
 
-            self.is_halted = self.mem.interrupt_flag == 0;
+            if self.mem.interrupt_flag > 0 {
+                self.is_halted = false;
+            }
 
             cur_num_cycles += cycles as u64;
         }
@@ -2246,7 +2243,7 @@ impl fmt::Debug for Cpu {
 //        write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
 //               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(0xFF44), instr)
 
-        write!(f, "")
+        write!(f, "PC: {:04x}", self.pc)
     }
 }
 

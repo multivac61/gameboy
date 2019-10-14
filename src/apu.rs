@@ -31,10 +31,11 @@ impl Apu {
     }
 
     pub fn read(&self, _address: MemoryAddress) -> u8 {
-        unimplemented!()
+        // TODO: Implement
+        0
     }
 
     pub fn write(&mut self, _address: MemoryAddress, _data: u8) {
-        unimplemented!()
+        // TODO: Implement
     }
 }

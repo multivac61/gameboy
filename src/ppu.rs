@@ -157,6 +157,7 @@ impl Ppu {
             OBP1 => self.obp1 = data,
             WY => self.wy = data,
             WX => self.wx = data,
+            0xFF46 => println!("DMA NOT IMPLEMENTED!!!"),
             _ => unreachable!()
         };
     }
