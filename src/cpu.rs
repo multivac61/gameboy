@@ -274,17 +274,11 @@ impl Cpu {
         let is_window_enabled = ith_bit(control, LcdControl::WindowDisplayEnable as u8);
         let is_window_visible = is_window_enabled && window_y <= line;
 
-        let y_pos = if is_window_visible {
-            line - window_y
-        } else {
-            line.wrapping_add(scroll_y)
-        };
-
         for x in 0..VIDEO_WIDTH as u8 {
-            let (x_pos, tile_type) = if is_window_visible && x >= window_x {
-                (x - window_x, TileType::Window)
+            let (x_pos, y_pos, tile_type) = if is_window_visible && x >= window_x {
+                (x - window_x, line - window_y, TileType::Window)
             } else {
-                (x.wrapping_add(scroll_x), TileType::Background)
+                (x.wrapping_add(scroll_x), line.wrapping_add(scroll_y), TileType::Background)
             };
 
             let (byte2, byte1) = little_endian::u8(self.get_tile_data(x_pos, y_pos, tile_type));

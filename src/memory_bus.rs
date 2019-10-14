@@ -225,8 +225,7 @@ impl MemoryBus {
             TMA => self.timer.tma = data,
             DMA => {
                 let source = little_endian::u16(0, data) as usize;
-                self.raw_memory
-                    .copy_within(source..source + 0xA0, OAM as usize);
+                self.raw_memory.copy_within(source..source + 0xA0, OAM as usize);
             }
             BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
             _ => self.raw_memory[address as usize] = data,
