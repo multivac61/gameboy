@@ -139,7 +139,7 @@ impl Cpu {
             reg: Registers::new(),
             pc: if enable_boot_rom { 0x000 } else { 0x100 },
             mem: MemoryBus::new(cartridge, enable_boot_rom),
-            sp: 0xFFFF,
+            sp: if enable_boot_rom { 0xFFFF } else { 0xFFFE },
             is_halted: false,
             is_stopped: false,
             are_interrupts_enabled: false,
