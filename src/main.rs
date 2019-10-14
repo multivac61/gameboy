@@ -78,14 +78,14 @@ fn main() {
         let delta = time_delta as f64 / ONE_SECOND_IN_MICROS as f64;
 
         let cur_keys = [
-            window.is_key_down(Key::Key0),
-            window.is_key_down(Key::Key1),
-            window.is_key_down(Key::Key2),
-            window.is_key_down(Key::Key3),
-            window.is_key_down(Key::Key4),
-            window.is_key_down(Key::Key5),
-            window.is_key_down(Key::Key6),
-            window.is_key_down(Key::Key7)
+            window.is_key_down(Key::A),
+            window.is_key_down(Key::S),
+            window.is_key_down(Key::Z),
+            window.is_key_down(Key::X),
+            window.is_key_down(Key::Right),
+            window.is_key_down(Key::Left),
+            window.is_key_down(Key::Down),
+            window.is_key_down(Key::Up)
         ];
 
         prev_keys.iter().zip(cur_keys.iter()).enumerate().for_each(|(i, (prev, cur))|

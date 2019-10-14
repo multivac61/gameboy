@@ -149,14 +149,14 @@ impl Cpu {
     }
 
     pub fn key_up(&mut self, key: Key) {
-        self.mem.joypad.key_up(key);
         println!("key_up: {:?}", key);
+        self.mem.joypad.key_up(key);
     }
 
     pub fn key_down(&mut self, key: Key) {
-        self.mem.joypad.key_down(key);
         println!("key_down: {:?}", key);
 
+        self.mem.joypad.key_down(key);
         self.request_interrupt(Interrupt::Joypad);
     }
 
