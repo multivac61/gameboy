@@ -345,7 +345,8 @@ impl Cpu {
             let does_sprite_intercept_line = scan_line >= sprite.y && (scan_line < (sprite.y + y_size));
             if does_sprite_intercept_line {
                 let line = 2 * if sprite.y_flip {
-                    -(scan_line as i16 - sprite.y as i16 - y_size as i16)
+                    // TODO: WHY?1
+                    -(1 + scan_line as i16 - sprite.y as i16 - y_size as i16)
                 } else {
                     scan_line as i16 - sprite.y as i16
                 };
