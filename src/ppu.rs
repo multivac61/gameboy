@@ -19,9 +19,9 @@ const STAT: MemoryAddress = 0xFF41;
 const SCY: MemoryAddress = 0xFF42;
 const SCX: MemoryAddress = 0xFF43;
 const LY: MemoryAddress = 0xFF44;
-const LYC: MemoryAddress = 0xFF45;
-
-const BGP: MemoryAddress = 0xFF47;
+pub const LYC: MemoryAddress = 0xFF45;
+pub const DMA: MemoryAddress = 0xFF46;
+pub const BGP: MemoryAddress = 0xFF47;
 const OBP0: MemoryAddress = 0xFF48;
 const OBP1: MemoryAddress = 0xFF49;
 const WY: MemoryAddress = 0xFF4A;
@@ -149,9 +149,7 @@ impl Ppu {
             STAT => self.stat = data,
             SCY => self.scy = data,
             SCX => self.scx = data,
-            LY => self.ly = data,
             LYC => self.lyc = data,
-
             BGP => self.bgp = data,
             OBP0 => self.obp0 = data,
             OBP1 => self.obp1 = data,
@@ -162,7 +160,9 @@ impl Ppu {
         };
     }
 
-    pub fn dma(&mut self, _chunk: &[u8]) { unimplemented!() }
+    pub fn dma(&mut self, chunk: &[u8]) {
+        self.oam.copy_from_slice(chunk);
+    }
 
     pub fn update(&mut self, cycles: u8) -> u8 {
         let mut interrupt = 0;

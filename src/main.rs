@@ -60,7 +60,7 @@ fn main() {
     let mut buffer = Vec::new();
     let _bytes_read = file.read_to_end(&mut buffer);
 
-    let mut cpu = cpu::Cpu::new(buffer.as_slice(), true);
+    let mut cpu = cpu::Cpu::new(buffer.as_slice(), false);
 
     let mut window = Window::new(
         "DMG-01",
