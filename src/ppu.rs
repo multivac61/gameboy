@@ -373,9 +373,10 @@ impl Ppu {
 
                     // white is transparent
                     if c != (WHITE as u32) {
-                        self.frame_buffer
-                            [scan_line as usize * 160 + sprite.x as usize + pixel as usize] =
-                            (0xff << 24) | (c << 16) | (c << 8) | c;
+                        let pos = scan_line as usize * 160 + sprite.x as usize + pixel as usize;
+                        if pos < self.frame_buffer.len() {
+                            self.frame_buffer [pos] = (0xff << 24) | (c << 16) | (c << 8) | c;
+                        }
                     }
                 }
             }
