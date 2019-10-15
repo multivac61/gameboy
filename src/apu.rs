@@ -1,7 +1,33 @@
 use crate::cpu::MemoryAddress;
 
-pub const START: MemoryAddress = 0xFF10;
-pub const END: MemoryAddress = 0xFF30;
+const NR10: MemoryAddress = 0xFF10;
+const NR11: MemoryAddress = 0xFF11;
+const NR12: MemoryAddress = 0xFF12;
+const NR13: MemoryAddress = 0xFF13;
+const NR14: MemoryAddress = 0xFF14;
+const NR21: MemoryAddress = 0xFF16;
+const NR22: MemoryAddress = 0xFF17;
+const NR23: MemoryAddress = 0xFF18;
+const NR24: MemoryAddress = 0xFF19;
+const NR30: MemoryAddress = 0xFF1A;
+const NR31: MemoryAddress = 0xFF1B;
+const NR32: MemoryAddress = 0xFF1C;
+const NR33: MemoryAddress = 0xFF1D;
+const NR34: MemoryAddress = 0xFF1E;
+const NR41: MemoryAddress = 0xFF20;
+const NR42: MemoryAddress = 0xFF21;
+const NR43: MemoryAddress = 0xFF22;
+const NR44: MemoryAddress = 0xFF23;
+const NR50: MemoryAddress = 0xFF24;
+const NR51: MemoryAddress = 0xFF25;
+const NR52: MemoryAddress = 0xFF26;
+// ...
+const WAVE_PATTERN_RAM_START: MemoryAddress = 0xFF30;
+const WAVE_PATTERN_RAM_SIZE: usize = 16; // 32 * 4 bits
+const WAVE_PATTERN_RAM_END: MemoryAddress = WAVE_PATTERN_RAM_START + WAVE_PATTERN_RAM_SIZE as MemoryAddress - 1;
+
+pub const START: MemoryAddress = NR10;
+pub const END: MemoryAddress = WAVE_PATTERN_RAM_END;
 
 pub struct Apu {
     ram: Vec<u8>,
