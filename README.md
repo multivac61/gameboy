@@ -1,6 +1,8 @@
 # Game Boy 
 This is a work-in-progress Game Boy (DMG-01) emulator written as an introduction and an exercise in the [Rust programing language](https://www.rust-lang.org).
 
+![](mario.gif)
+
 ### Building and running
 This is pretty straight forward, thanks to the awesome toolchain support provided by the Rust team. 
 
