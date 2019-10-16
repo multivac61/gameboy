@@ -52,22 +52,37 @@ fn main() {
         .version("0.1")
         .author("Olafur Bogason & Daniel Gretarsson")
         .about("Does awesome things")
-        .arg(Arg::with_name("Game ROM")
-            .help("Sets the game ROM to use")
+        .arg(Arg::with_name("GAME_ROM")
+            .help("The game ROM to use")
             .required(true)
             .index(1))
         .arg(Arg::with_name("bootrom")
                  .short("b")
                  .long("bootrom")
                  .value_name("FILE")
-                 .help("")
+                 .help("Nintendo bootstrap ROM that displays the scrolling logo and performs system initalization")
                  .takes_value(true))
+        .arg(Arg::with_name("scale")
+            .short("s")
+            .long("scale")
+            .value_name("MULTIPLE_OF_TWO")
+            .help("Scale value for the display")
+            .takes_value(true))
         .get_matches();
 
-    let game_rom = load_binary(matches.value_of("Game ROM").unwrap());
+    let game_rom = load_binary(matches.value_of("GAME_ROM").unwrap());
     let boot_rom = match matches.value_of("bootrom") {
         Some(b) => Some(load_binary(b)),
         None => None
+    };
+    let scale = match matches.value_of("scale") {
+        Some(val) if val.parse::<usize>().unwrap() == 1 => Scale::X1,
+        Some(val) if val.parse::<usize>().unwrap() == 2 => Scale::X2,
+        Some(val) if val.parse::<usize>().unwrap() == 4 => Scale::X4,
+        Some(val) if val.parse::<usize>().unwrap() == 8 => Scale::X8,
+        Some(val) if val.parse::<usize>().unwrap() == 16 => Scale::X16,
+        Some(val) if val.parse::<usize>().unwrap() == 32 => Scale::X32,
+        _ => Scale::X4
     };
 
     let mut cpu = cpu::Cpu::new(game_rom.as_slice(), boot_rom);
@@ -82,7 +97,7 @@ fn main() {
             borderless: false,
             title: false,
             resize: false,
-            scale: Scale::X4,
+            scale,
         },
     )
     .unwrap();
