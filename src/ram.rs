@@ -3,7 +3,7 @@ use crate::cpu::MemoryAddress;
 const RAM_SIZE: usize = 0x2000;
 
 pub const START: MemoryAddress = 0xC000;
-pub const END: MemoryAddress = START + RAM_SIZE as MemoryAddress;
+pub const END: MemoryAddress = START + RAM_SIZE as MemoryAddress - 1;
 pub const ECHO_START: MemoryAddress = 0xE000;
 pub const ECHO_END: MemoryAddress = 0xFDFF;
 

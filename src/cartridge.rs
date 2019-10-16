@@ -5,12 +5,13 @@ const ROM_BANK_0_END: u16 = 0x3FFF;
 pub const ROM_BANK_N_START: u16 = 0x4000;
 const ROM_BANK_N_END: u16 = 0x7FFF;
 
-const ROM_BANK_SIZE: u16 = 0x4000;
-const RAM_BANK_SIZE: u16 = 0x2000;
+const ROM_BANK_SIZE: usize = 0x4000;
+const RAM_BANK_SIZE: usize = 0x2000;
 
 pub const RAM_START: u16 = 0xA000;
-pub const RAM_END: u16 = RAM_START + RAM_BANK_SIZE - 1;
+pub const RAM_END: u16 = RAM_START + RAM_BANK_SIZE as MemoryAddress - 1;
 
+#[derive(Debug)]
 enum Controller {
     Local,
     MBC1 { is_4mbit: bool },
@@ -20,9 +21,9 @@ enum Controller {
 pub struct Cartridge {
     controller: Controller,
     rom: Vec<u8>,
-    cur_rom_bank: u8,
+    cur_rom_bank: usize,
     ram: Vec<u8>,
-    cur_ram_bank: u8,
+    cur_ram_bank: usize,
     should_enable_ram: bool,
 }
 
@@ -34,15 +35,6 @@ impl Cartridge {
             5..=6 => Controller::MBC2,
             _ => unreachable!(),
         };
-
-//        let ram_size = match cartridge[0x149] {
-//            0 => 0,
-//            1 => 0x800,
-//            2 => 0x2000,
-//            3 => 0x8000,
-//            4 => 0x20000,
-//            _ => unreachable!(),
-//        };
 
         let ram_size = 0x8000;
 
@@ -60,16 +52,16 @@ impl Cartridge {
         match address {
             ROM_BANK_0_START..=ROM_BANK_0_END => self.rom[address as usize],
             ROM_BANK_N_START..=ROM_BANK_N_END => {
-                let address = address - ROM_BANK_N_START + ROM_BANK_SIZE * self.cur_rom_bank as u16;
-                self.rom[address as usize]
+                let address = (address - ROM_BANK_N_START) as usize + ROM_BANK_SIZE * self.cur_rom_bank;
+                self.rom[address]
             }
             _ => panic!("Tried to write to invalid cartridge address"),
         }
     }
 
     pub fn read_ram(&self, address: MemoryAddress) -> u8 {
-        let address = address - RAM_START + RAM_BANK_SIZE * self.cur_ram_bank as u16;
-        self.ram[address as usize]
+        let address = (address - RAM_START) as usize + RAM_BANK_SIZE * self.cur_ram_bank;
+        self.ram[address]
     }
 
     pub fn write_rom(&mut self, address: MemoryAddress, data: u8) {
@@ -77,7 +69,16 @@ impl Cartridge {
             0x0000..=0x1FFF => {
                 self.should_enable_ram = match self.controller {
                     Controller::Local => false,
-                    Controller::MBC1 { is_4mbit: true } => data & 0x0F == 0x0A,
+                    Controller::MBC1 { is_4mbit: _ } => data & 0x0F == 0x0A,
+                    Controller::MBC2 => {
+                        // The least significant bit of the upper address
+                        // byte must be zero to enable/disable cart RAM.
+                        if (address >> 8) & 0x01 == 0x00 {
+                            data != 0
+                        } else {
+                            self.should_enable_ram
+                        }
+                    }
                     _ => unreachable!(),
                 };
             }
@@ -86,18 +87,15 @@ impl Cartridge {
                     Controller::Local => 1,
                     Controller::MBC1 { is_4mbit: _ } => match data {
                         0..=1 => 1,
-                        _ => data & 0b0001_1111,
+                        _ => data as usize & 0b0001_1111,
                     },
                     Controller::MBC2 => {
                         // The least significant bit of the upper address
-                        // byte must be zero to enable/disable cart RAM.
-                        if (address >> 8) & 0x01 == 0x00 {
-                            self.should_enable_ram = true;
-                            self.cur_rom_bank
+                        // byte must be one to select a ROM bank.
+                        if (address >> 8) & 0x01 == 0x01 {
+                            data as usize & 0b0000_1111
                         } else {
-                            // The least significant bit of the upper address
-                            // byte must be one to select a ROM bank.
-                            data & 0b0000_1111
+                            self.cur_rom_bank
                         }
                     }
                 };
@@ -110,14 +108,14 @@ impl Cartridge {
                             // Writing a value (XXXXXXBB - X = Don't care, B =
                             // bank select bits) into 4000-5FFF area will select
                             // an appropriate RAM bank at A000-C000.
-                            self.cur_ram_bank = data & 0b0000_0011;
+                            self.cur_ram_bank = data as usize & 0b0000_0011;
                         } else {
                             // If memory model is set to 16/8 mode:
                             // Writing a value (XXXXXXBB - X = Don't care, B =
                             // bank select bits) into 4000-5FFF area will set the
                             // two most significant ROM address lines.
                             self.cur_rom_bank &= 0b0001_11111;
-                            self.cur_rom_bank |= (data & 0b11) << 6;
+                            self.cur_rom_bank |= (data as usize & 0b11) << 6;
                         }
                     }
                     _ => unreachable!(),
@@ -143,8 +141,8 @@ impl Cartridge {
         match address {
             0xA000..=0xBFFF => {
                 if self.should_enable_ram {
-                    let address = address - RAM_START + RAM_BANK_SIZE * self.cur_ram_bank as u16;
-                    self.ram[address as usize] = data;
+                    let address = (address - RAM_START) as usize + RAM_BANK_SIZE * self.cur_ram_bank;
+                    self.ram[address] = data;
                 }
             }
             _ => unreachable!()
