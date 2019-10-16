@@ -79,7 +79,6 @@ impl Cartridge {
                             self.should_enable_ram
                         }
                     }
-                    _ => unreachable!(),
                 };
             }
             0x2000..=0x3FFF => {

@@ -3,7 +3,7 @@ use std::fmt;
 use crate::instructions::Instruction;
 use crate::instructions::Instruction::*;
 use crate::joypad::Key;
-use crate::memory_bus::MemoryBus;
+use crate::memory_bus::{MemoryBus, BOOT_ROM_SIZE};
 use crate::registers::{ConditionalFlag::*, Flags, Register, Register16bit, Registers};
 use crate::util;
 
@@ -37,25 +37,28 @@ impl std::convert::From<u8> for Interrupt {
 }
 
 pub struct Cpu {
-    reg: Registers,
     pc: MemoryAddress,
-    pub mem: MemoryBus,
     sp: MemoryAddress,
     is_halted: bool,
     is_stopped: bool,
     are_interrupts_enabled: bool,
+    reg: Registers,
+    pub mem: MemoryBus,
 }
 
 impl Cpu {
-    pub fn new(cartridge: &[u8], enable_boot_rom: bool) -> Self {
+    pub fn new(cartridge: &[u8], boot_rom: Option<Vec<u8>>) -> Self {
         Cpu {
-            reg: Registers::new(),
-            pc: if enable_boot_rom { 0x000 } else { 0x100 },
-            mem: MemoryBus::new(cartridge, enable_boot_rom),
-            sp: if enable_boot_rom { 0xFFFF } else { 0xFFFE },
+            pc: match &boot_rom {
+                Some(b) if b.len() == BOOT_ROM_SIZE => 0x000,
+                _ => 0x100,
+            },
+            sp: 0xFFFE,
             is_halted: false,
             is_stopped: false,
             are_interrupts_enabled: false,
+            reg: Registers::new(),
+            mem: MemoryBus::new(cartridge, boot_rom),
         }
     }
 
@@ -2252,7 +2255,7 @@ mod test {
 
     fn make_test_cpu() -> Cpu {
         let cartridge = [0u8; 0x8000];
-        Cpu::new(&cartridge, false)
+        Cpu::new(&cartridge, None)
     }
 
     #[test]

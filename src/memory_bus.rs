@@ -1,6 +1,3 @@
-use std::fs::File;
-use std::io::Read;
-
 use crate::apu::{self, Apu};
 use crate::cartridge::{self, Cartridge};
 use crate::cpu::{MemoryAddress, BOOT_ROM_ENABLE_REGISTER};
@@ -12,6 +9,7 @@ use crate::serial::{self, Serial};
 use crate::timer::{self, Timer};
 use crate::util;
 
+pub const BOOT_ROM_SIZE: usize = 0x100;
 const BOOT_ROM_START: MemoryAddress = 0x0000;
 const BOOT_ROM_END: MemoryAddress = 0x100;
 
@@ -23,8 +21,8 @@ const DMA: MemoryAddress = 0xFF46;
 const INTERRUPT_ENABLE: MemoryAddress = 0xFFFF;
 
 pub struct MemoryBus {
-    boot_rom: Vec<u8>,
     is_boot_rom_enabled: bool,
+    boot_rom: Vec<u8>,
 
     cartridge: Cartridge,
     ram: Ram,
@@ -41,20 +39,16 @@ pub struct MemoryBus {
 }
 
 impl MemoryBus {
-    pub fn new(game_rom: &[u8], enable_boot_rom: bool) -> Self {
-        let file_path = std::env::current_dir()
-            .unwrap()
-            .join(std::path::Path::new("src"))
-            .join(std::path::Path::new("DMG_ROM.bin"));
-
-        let mut file = File::open(file_path).expect("There was an issue opening the file");
-        let mut boot_rom = Vec::new();
-        let _bytes_read = file.read_to_end(&mut boot_rom);
-        assert_eq!(_bytes_read.unwrap(), 0x100);
-
+    pub fn new(game_rom: &[u8], boot_rom: Option<Vec<u8>>) -> Self {
         MemoryBus {
-            boot_rom,
-            is_boot_rom_enabled: enable_boot_rom,
+            is_boot_rom_enabled: match &boot_rom {
+                Some(b) if b.len() == BOOT_ROM_SIZE => true,
+                _ => false
+            },
+            boot_rom: match &boot_rom {
+                Some(b) if b.len() == BOOT_ROM_SIZE => b.clone(),
+                _ => vec!()
+            },
 
             cartridge: Cartridge::new(game_rom),
             ram: Ram::new(),
@@ -102,7 +96,7 @@ impl MemoryBus {
             ppu::REG_START..=ppu::LYC => self.ppu.write(address, data),
             DMA => {
                 let source = u16::from_le_bytes([0, data]);
-                let chunk: Vec<u8> = (source..source+0xA0).map(|addr| self.read(addr)).collect();
+                let chunk: Vec<u8> = (source..source + 0xA0).map(|addr| self.read(addr)).collect();
 
                 self.ppu.dma(&chunk);
             }
@@ -123,7 +117,7 @@ impl MemoryBus {
     }
 
     pub fn read(&self, address: MemoryAddress) -> u8 {
-        if address < BOOT_ROM_END && self.is_boot_rom_enabled {
+        if address < BOOT_ROM_END && self.is_boot_rom_enabled && self.boot_rom.len() == BOOT_ROM_SIZE {
             return self.boot_rom[address as usize];
         }
 
@@ -157,7 +151,7 @@ impl MemoryBus {
             _ => {
                 println!("Tried to read from unavailable address {:#x}", address);
                 0x00
-            },
+            }
         }
     }
 

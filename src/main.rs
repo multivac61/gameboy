@@ -2,8 +2,10 @@ use std::fs::File;
 use std::io::Read;
 use std::thread::sleep;
 use std::time::*;
+use std::path::Path;
 
 use minifb::{Key, Scale, Window, WindowOptions};
+use clap::{App, Arg};
 
 mod apu;
 mod cartridge;
@@ -20,49 +22,57 @@ mod timer;
 mod util;
 
 const ONE_SECOND_IN_MICROS: usize = 1000000000;
-//const ONE_SECOND_IN_CYCLES: usize = 4190000;
 const ONE_FRAME_IN_CYCLES: usize = 70224;
-//const NUMBER_OF_PIXELS: usize = 23040;
 
 const ENLARGEMENT_FACTOR: usize = 1;
 const WINDOW_DIMENSIONS: [usize; 2] = [(160 * ENLARGEMENT_FACTOR), (144 * ENLARGEMENT_FACTOR)];
 
+fn load_binary(filename: &str) -> Vec<u8> {
+    let fp = Path::new(filename);
+    if !fp.is_file() {
+        // TODO: Return error?
+        panic!("Must be a file: {}", fp.display());
+    }
+
+    let fp = if fp.is_relative() {
+        std::env::current_dir().unwrap().join(fp)
+    } else {
+        fp.to_path_buf()
+    };
+
+    let mut file = File::open(fp).expect("Couldn't open boot file");
+    let mut buf = Vec::new();
+    let _bytes_read = file.read_to_end(&mut buf);
+
+    buf
+}
+
 fn main() {
-//    let file_path = std::env::current_dir().unwrap().join("src/Super Mario Land (World).gb");
+    let matches = App::new("GameBoy")
+        .version("0.1")
+        .author("Olafur Bogason & Daniel Gretarsson")
+        .about("Does awesome things")
+        .arg(Arg::with_name("Game ROM")
+            .help("Sets the game ROM to use")
+            .required(true)
+            .index(1))
+        .arg(Arg::with_name("bootrom")
+                 .short("b")
+                 .long("bootrom")
+                 .value_name("FILE")
+                 .help("")
+                 .takes_value(true))
+        .get_matches();
 
-    let file_name = std::env::args().nth(1);
-    let file_path = std::env::current_dir().unwrap().join(file_name.unwrap());
-    //        .join(std::path::Path::new("src"))
-    //        .join(std::path::Path::new("Tetris.gb"));
-    //        .join(std::path::Path::new("Dr. Mario (World).gb"));
-    //        .join(std::path::Path::new(".."))
-    //        .join(std::path::Path::new("gb-test-roms"))
-    //        .join(std::path::Path::new("cpu_instrs"))
-    //        .join(std::path::Path::new("cpu_instrs.gb"));
-    //        .join(std::path::Path::new("06-ld r,r.gb"));
-    //        .join(std::path::Path::new("individual"))
-    //        .join(std::path::Path::new("01-special.gb"));
-    //        .join(std::path::Path::new("02-interrupts.gb"));
-    //            .join(std::path::Path::new("03-op sp,hl.gb"));
-    //    .join(std::path::Path::new("04-op r,imm.gb"));
-    //    .join(std::path::Path::new("05-op rp.gb"));
-    //    .join(std::path::Path::new("06-ld r,r.gb"));
-    //    .join(std::path::Path::new("07-jr,jp,call,ret,rst.gb"));
-    //    .join(std::path::Path::new("08-misc instrs.gb"));
-    //    .join(std::path::Path::new("09-op r,r.gb"));
-    //    .join(std::path::Path::new("10-bit ops.gb"));
-    //    .join(std::path::Path::new("11-op a,(hl).gb"));
+    let game_rom = load_binary(matches.value_of("Game ROM").unwrap());
+    let boot_rom = match matches.value_of("bootrom") {
+        Some(b) => Some(load_binary(b)),
+        None => None
+    };
 
-    //        let file_path = std::path::Path::new("/home/dingari/vblank_stat_intr-C.gb");
+    let mut cpu = cpu::Cpu::new(game_rom.as_slice(), boot_rom);
 
     let mut prev_keys = [false; 8];
-
-    println!("{:?}", file_path);
-    let mut file = File::open(file_path).expect("There was an issue opening the file");
-    let mut buffer = Vec::new();
-    let _bytes_read = file.read_to_end(&mut buffer);
-
-    let mut cpu = cpu::Cpu::new(buffer.as_slice(), false);
 
     let mut window = Window::new(
         "DMG-01",
