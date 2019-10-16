@@ -1,4 +1,7 @@
+use crate::cpu::MemoryAddress;
 use crate::util;
+
+pub const P1: MemoryAddress = 0xFF00;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Key {
@@ -9,7 +12,7 @@ pub enum Key {
     Right,
     Left,
     Down,
-    Up
+    Up,
 }
 
 impl std::convert::From<usize> for Key {
@@ -31,15 +34,15 @@ impl std::convert::From<usize> for Key {
 pub struct Joypad {
     direction_state: u8,
     key_state: u8,
-    register_state: u8
+    register_state: u8,
 }
 
 impl Joypad {
     pub fn new() -> Self {
-        Joypad{
+        Joypad {
             direction_state: 0b0000_1111,
             key_state: 0b0000_1111,
-            register_state: 0b0011_0000
+            register_state: 0b0011_0000,
         }
     }
 
@@ -61,23 +64,29 @@ impl Joypad {
 
     pub fn key_up(&mut self, key: Key) {
         match key {
-            Key::A | Key::B | Key::Select | Key::Start =>
-                self.key_state = util::set_bit(self.key_state, Joypad::get_in_bit_num(key)),
-            Key::Right | Key::Left | Key::Up | Key::Down =>
-                self.direction_state = util::set_bit(self.direction_state, Joypad::get_in_bit_num(key)),
+            Key::A | Key::B | Key::Select | Key::Start => {
+                self.key_state = util::set_bit(self.key_state, Joypad::get_in_bit_num(key))
+            }
+            Key::Right | Key::Left | Key::Up | Key::Down => {
+                self.direction_state =
+                    util::set_bit(self.direction_state, Joypad::get_in_bit_num(key))
+            }
         }
     }
 
     pub fn key_down(&mut self, key: Key) {
         match key {
-            Key::A | Key::B | Key::Select | Key::Start =>
-                self.key_state = util::clear_bit(self.key_state, Joypad::get_in_bit_num(key)),
-            Key::Right | Key::Left | Key::Up | Key::Down =>
-                self.direction_state = util::clear_bit(self.direction_state, Joypad::get_in_bit_num(key)),
+            Key::A | Key::B | Key::Select | Key::Start => {
+                self.key_state = util::clear_bit(self.key_state, Joypad::get_in_bit_num(key))
+            }
+            Key::Right | Key::Left | Key::Up | Key::Down => {
+                self.direction_state =
+                    util::clear_bit(self.direction_state, Joypad::get_in_bit_num(key))
+            }
         }
     }
 
-    pub fn get_state(&self) -> u8 {
+    pub fn read(&self, _: MemoryAddress) -> u8 {
         match self.register_state & 0x30 {
             0x10 => self.register_state | self.key_state,
             0x20 => self.register_state | self.direction_state,
@@ -85,36 +94,35 @@ impl Joypad {
         }
     }
 
-    pub fn set_state(&mut self, new_state: u8) {
-        self.register_state = new_state & 0x30;
+    pub fn write(&mut self, address: MemoryAddress, new_state: u8) {
+        match address {
+            P1 => self.register_state = new_state & 0x30,
+            _=> unreachable!()
+        };
     }
 }
 
 #[cfg(test)]
-mod test
-{
+mod test {
     use crate::joypad::{Joypad, Key};
 
     #[test]
-    fn key_down()
-    {
+    fn key_down() {
         let mut jp = Joypad::new();
 
-        assert_eq!(jp.get_state(), 0b0011_1111);
-        jp.set_state(0b0001_0000);
+        assert_eq!(jp.read(0xFF00), 0b0011_1111);
+        jp.write(0xFF00, 0b0001_0000);
         jp.key_down(Key::A);
-        assert_eq!(jp.get_state(), 0b0001_1110);
+        assert_eq!(jp.read(0xFF00), 0b0001_1110);
 
         jp.key_up(Key::A);
-        assert_eq!(jp.get_state(), 0b0001_1111);
+        assert_eq!(jp.read(0xFF00), 0b0001_1111);
 
-        jp.set_state(0b0010_0000);
+        jp.write(0xFF00, 0b0010_0000);
         jp.key_down(Key::Right);
-        assert_eq!(jp.get_state(), 0b0010_1110);
+        assert_eq!(jp.read(0xFF00), 0b0010_1110);
 
         jp.key_up(Key::Right);
-        assert_eq!(jp.get_state(), 0b0010_1111);
+        assert_eq!(jp.read(0xFF00), 0b0010_1111);
     }
-
 }
-

@@ -17,7 +17,16 @@ pub struct Flags {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Register { B, C, D, E, H, L, A, F }
+pub enum Register {
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+    A,
+    F,
+}
 
 impl std::convert::From<u8> for Register {
     fn from(n: u8) -> Register {
@@ -30,7 +39,7 @@ impl std::convert::From<u8> for Register {
             5 => Register::L,
             6 => Register::A,
             7 => Register::F,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
@@ -45,7 +54,7 @@ pub enum Register16bit {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Registers {
-    reg: [u8; 8]
+    reg: [u8; 8],
 }
 
 impl Registers {
@@ -58,7 +67,7 @@ impl Registers {
     pub fn write_word(&mut self, r: Register16bit, val: u16) {
         let lsb_mask = match r {
             Register16bit::AF => 0xF0,
-            _ => 0xFF
+            _ => 0xFF,
         };
 
         self.reg[r as usize] = little_endian::msb(val);
@@ -66,7 +75,7 @@ impl Registers {
     }
 
     pub fn read_word(&self, r: Register16bit) -> u16 {
-        little_endian::u16(self.reg[r as usize + 1], self.reg[r as usize])
+        u16::from_be_bytes([self.reg[r as usize], self.reg[r as usize + 1]])
     }
 
     pub fn write(&mut self, r: Register, val: u8) {
@@ -111,13 +120,11 @@ impl Registers {
 }
 
 #[cfg(test)]
-mod test
-{
-    use crate::registers::{Register, Register16bit, Registers, ConditionalFlag};
+mod test {
+    use crate::registers::{ConditionalFlag, Register, Register16bit, Registers};
 
     #[test]
-    fn wide_registers()
-    {
+    fn wide_registers() {
         let mut reg = Registers::new();
         reg.write(Register::A, 0x12);
         reg.write(Register::F, 0x23);
@@ -152,10 +159,14 @@ mod test
     }
 
     #[test]
-    fn flags()
-    {
+    fn flags() {
         let mut r = Registers::new();
-        let flags = [ConditionalFlag::Zero, ConditionalFlag::Subtract, ConditionalFlag::HalfCarry, ConditionalFlag::Carry];
+        let flags = [
+            ConditionalFlag::Zero,
+            ConditionalFlag::Subtract,
+            ConditionalFlag::HalfCarry,
+            ConditionalFlag::Carry,
+        ];
 
         // Check if initially the flags are good
         assert_eq!(r.read(Register::F) & 0x0F, 0);

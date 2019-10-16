@@ -1,42 +1,13 @@
+use std::fmt;
+
 use crate::instructions::Instruction;
 use crate::instructions::Instruction::*;
+use crate::joypad::Key;
 use crate::memory_bus::MemoryBus;
 use crate::registers::{ConditionalFlag::*, Flags, Register, Register16bit, Registers};
-use crate::joypad::Key;
-use crate::util::{ith_bit, little_endian};
-
-pub const VIDEO_WIDTH: u32 = 160;
-pub const VIDEO_HEIGHT: u32 = 144;
+use crate::util;
 
 const CLOCK_FREQUENCY: f64 = 4_194_304.0;
-
-pub const OAM: u16 = 0xFE00;
-
-pub const P1: u16 = 0xFF00;
-pub const DIV: u16 = 0xFF04;
-pub const TIMA: u16 = 0xFF05;
-pub const TMA: u16 = 0xFF06;
-pub const TAC: u16 = 0xFF07;
-
-const LCDC: u16 = 0xFF40;
-const STAT: u16 = 0xFF41;
-const SCY: u16 = 0xFF42;
-const SCX: u16 = 0xFF43;
-const BGP: u16 = 0xFF47;
-const OBP0: u16 = 0xFF48;
-const OBP1: u16 = 0xFF49;
-const WY: u16 = 0xFF4A;
-const WX: u16 = 0xFF4B;
-const LY: u16 = 0xFF44;
-const LYC: u16 = 0xFF45;
-pub const DMA: u16 = 0xFF46;
-
-const SCANLINE_CPU_CYCLES: i64 = 456;
-
-const WHITE: u8 = 255;
-const LIGHT_GRAY: u8 = 0xCC;
-const DARK_GRAY: u8 = 0x77;
-const BLACK: u8 = 0;
 
 const INTERRUPT_REQUEST_REGISTER: u16 = 0xFF0F;
 const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
@@ -44,62 +15,6 @@ pub const BOOT_ROM_ENABLE_REGISTER: u16 = 0xFF50;
 
 pub type MemoryAddress = u16;
 
-enum TileType {
-    Background,
-    Window,
-}
-
-#[derive(PartialEq)]
-pub enum Lcd {
-    HBlank,
-    VBlank,
-    SearchingRam,
-    TransferringDataToDriver,
-}
-
-impl std::convert::From<u8> for Lcd {
-    fn from(n: u8) -> Lcd {
-        match n {
-            0b00 => Lcd::HBlank,
-            0b01 => Lcd::VBlank,
-            0b10 => Lcd::SearchingRam,
-            0b11 => Lcd::TransferringDataToDriver,
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl std::convert::From<Lcd> for u8 {
-    fn from(l: Lcd) -> u8 {
-        match l {
-            Lcd::HBlank => 0,
-            Lcd::VBlank => 1,
-            Lcd::SearchingRam => 2,
-            Lcd::TransferringDataToDriver => 3,
-        }
-    }
-}
-
-pub enum LcdControl {
-    //Bit 7 - LCD Display Enable (0=Off, 1=On)
-    //Bit 6 - Window Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
-    //Bit 5 - Window Display Enable (0=Off, 1=On)
-    //Bit 4 - BG & Window Tile Data Select (0=8800-97FF, 1=8000-8FFF)
-    //Bit 3 - BG Tile Map Display Select (0=9800-9BFF, 1=9C00-9FFF)
-    //Bit 2 - OBJ (Sprite) Size (0=8x8, 1=8x16)
-    //Bit 1 - OBJ (Sprite) Display Enable (0=Off, 1=On)
-    //Bit 0 - BG Display (for CGB see below) (0=Off, 1=On)
-    BackgroundEnable,
-    ObjectEnable,
-    ObjectSize,
-    BackgroundTileMapSelect,
-    BackgroundAndWindodwTileDataSelect,
-    WindowDisplayEnable,
-    WindowTileMapSelect,
-    Enable,
-}
-
-// Bit locations
 pub enum Interrupt {
     VBlank,
     LCD,
@@ -124,13 +39,11 @@ impl std::convert::From<u8> for Interrupt {
 pub struct Cpu {
     reg: Registers,
     pc: MemoryAddress,
-    mem: MemoryBus,
+    pub mem: MemoryBus,
     sp: MemoryAddress,
     is_halted: bool,
     is_stopped: bool,
     are_interrupts_enabled: bool,
-    scan_counter: i64,
-    pub display: [u32; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
 }
 
 impl Cpu {
@@ -143,236 +56,17 @@ impl Cpu {
             is_halted: false,
             is_stopped: false,
             are_interrupts_enabled: false,
-            scan_counter: 0,
-            display: [0; (VIDEO_WIDTH * VIDEO_HEIGHT) as usize],
         }
     }
 
     pub fn key_up(&mut self, key: Key) {
-        println!("key_up: {:?}", key);
         self.mem.joypad.key_up(key);
     }
 
     pub fn key_down(&mut self, key: Key) {
-        println!("key_down: {:?}", key);
-
         self.mem.joypad.key_down(key);
-        self.request_interrupt(Interrupt::Joypad);
-    }
 
-    fn update_graphics(&mut self, cycles: u8) {
-        let status = self.mem.read(STAT);
-        let control = self.mem.read(LCDC);
-        let is_enabled = ith_bit(control, LcdControl::Enable as u8);
-
-        let set_mode_bits = |status, mode| (status & 0b1111_1100) | mode as u8;
-
-        if !is_enabled {
-            // set the mode to 1 during lcd disabled and reset scan line
-            self.scan_counter = SCANLINE_CPU_CYCLES;
-            self.mem.write(LY, 0);
-            let default_status = set_mode_bits(status, Lcd::VBlank);
-            self.mem.write(STAT, default_status);
-            return;
-        }
-
-        let line = self.mem.read(LY);
-        let mode = Lcd::from(status & 0b0000_0011);
-
-        let (new_mode, should_interrupt) = if line >= 144 {
-            (Lcd::VBlank, ith_bit(status, 4))
-        } else if self.scan_counter >= 456 - 80 {
-            (Lcd::SearchingRam, ith_bit(status, 5))
-        } else if self.scan_counter >= 456 - 80 - 172 {
-            (Lcd::TransferringDataToDriver, false)
-        } else {
-            (Lcd::HBlank, ith_bit(status, 3))
-        };
-
-        if new_mode != mode && should_interrupt {
-            self.request_interrupt(Interrupt::LCD);
-        }
-
-        // check the coincidence flag
-        let new_status = if line == self.mem.read(LYC) {
-            if ith_bit(status, 6) {
-                self.request_interrupt(Interrupt::LCD);
-            }
-            status | (1 << 2)
-        } else {
-            status & !(1 << 2)
-        };
-
-        self.mem.write(STAT, set_mode_bits(new_status, new_mode));
-
-        self.scan_counter -= i64::from(cycles);
-
-        if self.scan_counter <= 0 {
-            self.mem.write(LY, line + 1);
-
-            self.scan_counter = 456;
-
-            if line < 144 {
-                if ith_bit(control, LcdControl::BackgroundEnable as u8) {
-                    self.render_tiles(line);
-                }
-
-                if ith_bit(control, LcdControl::ObjectEnable as u8) {
-                    self.render_sprites(line);
-                }
-            } else if line == 144 {
-                self.request_interrupt(Interrupt::VBlank);
-            } else if line == 154 {
-                self.mem.write(LY, 0);
-            }
-        }
-    }
-
-    fn get_tile_data(&self, x: u8, y: u8, tile_type: TileType) -> u16 {
-        let control = self.mem.read(LCDC);
-
-        let get_tile_num = |x, y| -> u8 {
-            let (row, col) = (y / 8, x / 8);
-
-            let map_select_bit = match tile_type {
-                TileType::Background => LcdControl::BackgroundTileMapSelect as u8,
-                TileType::Window => LcdControl::WindowTileMapSelect as u8,
-            };
-
-            // The Background Tile Map stores a 32x32 tile grid with corresponding tile numbers (one byte each).
-            let tile_num_base = if ith_bit(control, map_select_bit) { 0x9C00 } else { 0x9800 };
-            let tile_num_address = tile_num_base + row as u16 * 32 + col as u16;
-
-            let _bg_tile_map = self.mem.raw_memory[tile_num_base as usize..tile_num_base as usize + 32 * 32].to_vec();
-
-            self.mem.read(tile_num_address)
-        };
-
-        // Tiles consist of 8x8 pixels. Each line of the tile occupies two bytes in memory (16 consecutive bytes total for any given tile).
-        let tile_address = if ith_bit(
-            control,
-            LcdControl::BackgroundAndWindodwTileDataSelect as u8,
-        ) {
-            let tile_num = get_tile_num(x, y) as u8;
-            0x8000 + tile_num as u16 * 16
-        } else {
-            let tile_num = get_tile_num(x, y) as i8;
-            0x8800 + (tile_num as i16 + 128) as u16 * 16
-        };
-
-        let _tile_data = self.mem.raw_memory[0x8000..0x9000].to_vec();
-
-        self.mem.read_word(tile_address + 2 * (y % 8) as u16)
-    }
-
-    fn render_tiles(&mut self, line: u8) {
-        let (scroll_x, scroll_y) = (self.mem.read(SCX), self.mem.read(SCY));
-        let (window_x, window_y) = (self.mem.read(WX), self.mem.read(WY));
-
-        let control = self.mem.read(LCDC);
-
-        let is_window_enabled = ith_bit(control, LcdControl::WindowDisplayEnable as u8);
-        let is_window_visible = is_window_enabled && window_y <= line;
-
-        for x in 0..VIDEO_WIDTH as u8 {
-            let (x_pos, y_pos, tile_type) = if is_window_visible && x >= window_x {
-                (x - window_x, line - window_y, TileType::Window)
-            } else {
-                (x.wrapping_add(scroll_x), line.wrapping_add(scroll_y), TileType::Background)
-            };
-
-            let (byte2, byte1) = little_endian::u8(self.get_tile_data(x_pos, y_pos, tile_type));
-
-            let colour_bit_num = 7 - (x_pos & 0b0111);
-            let color_num = ((ith_bit(byte2, colour_bit_num) as u8) << 1)
-                | ith_bit(byte1, colour_bit_num) as u8;
-
-            let c = self.get_color(color_num, BGP) as u32;
-            self.display[line as usize * VIDEO_WIDTH as usize + x as usize] =
-                (0xff << 24) | (c << 16) | (c << 8) | c;
-        }
-    }
-
-    fn get_color(&self, colour_id: u8, address: u16) -> u8 {
-        let palette = self.mem.read(address);
-        let colour_bits = (palette >> (2 * colour_id)) & 0b11;
-        match colour_bits {
-            3 => BLACK,
-            2 => DARK_GRAY,
-            1 => LIGHT_GRAY,
-            0 => WHITE,
-            _ => unreachable!(),
-        }
-    }
-
-    fn render_sprites(&mut self, scan_line: u8) {
-        let control = self.mem.read(LCDC);
-
-        let y_size = if ith_bit(control, LcdControl::ObjectSize as u8) {
-            16
-        } else {
-            8
-        };
-
-        struct Sprite {
-            x: u8,
-            y: u8,
-            pattern: u8,
-            priority: bool,
-            x_flip: bool,
-            y_flip: bool,
-            palette: MemoryAddress,
-        };
-
-        impl Sprite {
-            pub fn new(bytes: &[u8]) -> Self {
-                Sprite {
-                    x: bytes[1].wrapping_sub(8),
-                    y: bytes[0].wrapping_sub(16),
-                    pattern: bytes[2],
-                    priority: ith_bit(bytes[3], 7),
-                    x_flip: ith_bit(bytes[3], 5),
-                    y_flip: ith_bit(bytes[3], 6),
-                    palette: if ith_bit(bytes[3], 4) { OBP1 } else { OBP0 },
-                }
-            }
-        };
-
-        const NUM_SPRITES: u16 = 40;
-        for i in (0..4 * NUM_SPRITES as u16).step_by(4) {
-            let sprite = Sprite::new(self.mem.read_slice(OAM + i, 4));
-
-            let does_sprite_intercept_line = scan_line >= sprite.y && (scan_line < (sprite.y + y_size));
-            if does_sprite_intercept_line {
-                let line = 2 * if sprite.y_flip {
-                    // TODO: WHY?1
-                    -(1 + scan_line as i16 - sprite.y as i16 - y_size as i16)
-                } else {
-                    scan_line as i16 - sprite.y as i16
-                };
-
-                let address = 0x8000 + sprite.pattern as u16 * 16 + line as u16;
-                let (data2, data1) = little_endian::u8(self.mem.read_word(address));
-
-                for pixel in 0..=7 {
-                    let pixel_bit = if sprite.x_flip { pixel } else { 7 - pixel };
-                    let color_num = ((ith_bit(data2, pixel_bit) as u8) << 1) | ith_bit(data1, pixel_bit) as u8;
-                    let c = self.get_color(color_num, sprite.palette) as u32;
-
-                    // white is transparent
-                    if c != (WHITE as u32) {
-                        self.display[scan_line as usize * 160 + sprite.x as usize + pixel as usize] =
-                            (0xff << 24) | (c << 16) | (c << 8) | c;
-                    }
-                }
-            }
-        }
-    }
-
-    fn request_interrupt(&mut self, interrupt: Interrupt) {
-        let val = self.mem.read(INTERRUPT_REQUEST_REGISTER);
-        self.mem.write(INTERRUPT_REQUEST_REGISTER, val | (1 << interrupt as u8));
-
+        self.mem.interrupt_flag = util::set_bit(self.mem.interrupt_flag, Interrupt::Joypad as u8);
         self.is_halted = false;
     }
 
@@ -382,11 +76,12 @@ impl Cpu {
         let is_requested_and_enabled = is_requested & is_enabled;
 
         for i in 0..5 {
-            if ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
+            if util::ith_bit(is_requested_and_enabled, i) && self.are_interrupts_enabled {
                 self.are_interrupts_enabled = false;
 
-                let not_requested_anymore = is_requested & !(1 << i);
-                self.mem.write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
+                let not_requested_anymore = util::clear_bit(is_requested, i);
+                self.mem
+                    .write(INTERRUPT_REQUEST_REGISTER, not_requested_anymore);
 
                 self.push_stack(self.pc);
 
@@ -413,7 +108,7 @@ impl Cpu {
                 #[cfg(debug_assertions)]
                 println!("{:?}", self);
 
-                let (instruction, pc_increments) = self.fetch_instruction();
+                let (instruction, pc_increments) = self.fetch();
                 self.pc += pc_increments;
                 self.execute_instruction(instruction)
             } else {
@@ -422,10 +117,13 @@ impl Cpu {
 
             let interrupt_cycles = self.do_interrupts();
             let cycles = program_cycles + interrupt_cycles;
-            if self.mem.update_timers(cycles) {
-                self.request_interrupt(Interrupt::Timer)
+
+            self.mem.interrupt_flag |= self.mem.timer.update(cycles);
+            self.mem.interrupt_flag |= self.mem.ppu.update(cycles);
+
+            if self.mem.interrupt_flag > 0 {
+                self.is_halted = false;
             }
-            self.update_graphics(cycles);
 
             cur_num_cycles += cycles as u64;
         }
@@ -460,7 +158,11 @@ impl Cpu {
 
     fn alu_add(&mut self, b: u8, use_carry: bool) {
         let a = self.reg.read(Register::A);
-        let c = if use_carry { self.reg.get_flag(Carry) as u8 } else { 0 };
+        let c = if use_carry {
+            self.reg.get_flag(Carry) as u8
+        } else {
+            0
+        };
         let r = a.wrapping_add(b).wrapping_add(c);
         self.reg.write(Register::A, r);
         self.reg.set_flags(Flags {
@@ -479,7 +181,11 @@ impl Cpu {
 
     fn alu_sub(&mut self, b: u8, use_carry: bool) -> u8 {
         let a = self.reg.read(Register::A);
-        let c = if use_carry { self.reg.get_flag(Carry) as u8 } else { 0 };
+        let c = if use_carry {
+            self.reg.get_flag(Carry) as u8
+        } else {
+            0
+        };
         let r = a.wrapping_sub(b).wrapping_sub(c);
         self.reg.write(Register::A, r);
         self.reg.set_flags(Flags {
@@ -547,31 +253,39 @@ impl Cpu {
     }
 
     fn alu_rotate_left(&mut self, x: u8, use_carry: bool) -> u8 {
-        let c = if use_carry { self.reg.get_flag(Carry) } else { ith_bit(x, 7) };
+        let c = if use_carry {
+            self.reg.get_flag(Carry)
+        } else {
+            util::ith_bit(x, 7)
+        };
         let r = (x << 1) | c as u8;
         self.reg.set_flags(Flags {
             z: false,
             n: false,
             h: false,
-            c: ith_bit(x, 7),
+            c: util::ith_bit(x, 7),
         });
         r
     }
 
     fn alu_rotate_right(&mut self, x: u8, use_carry: bool) -> u8 {
-        let c = if use_carry { self.reg.get_flag(Carry) } else { ith_bit(x, 0) };
+        let c = if use_carry {
+            self.reg.get_flag(Carry)
+        } else {
+            util::ith_bit(x, 0)
+        };
         let r = (x >> 1) | ((c as u8) << 7);
         self.reg.set_flags(Flags {
             z: false,
             n: false,
             h: false,
-            c: ith_bit(x, 0),
+            c: util::ith_bit(x, 0),
         });
         r
     }
 
     fn alu_shift_left(&mut self, x: u8) -> u8 {
-        let carry = ith_bit(x, 7);
+        let carry = util::ith_bit(x, 7);
         let r = x << 1;
         self.reg.set_flags(Flags {
             z: r == 0,
@@ -583,13 +297,17 @@ impl Cpu {
     }
 
     fn alu_shift_right(&mut self, x: u8, is_arithmetic: bool) -> u8 {
-        let sign_bit = if is_arithmetic { ith_bit(x, 7) as u8 } else { 0 };
+        let sign_bit = if is_arithmetic {
+            util::ith_bit(x, 7) as u8
+        } else {
+            0
+        };
         let r = (x >> 1) | ((sign_bit as u8) << 7);
         self.reg.set_flags(Flags {
             z: r == 0,
             n: false,
             h: false,
-            c: ith_bit(x, 0),
+            c: util::ith_bit(x, 0),
         });
         r
     }
@@ -608,7 +326,7 @@ impl Cpu {
     fn alu_test_bit(&mut self, x: u8, bit: u8) {
         assert!(bit <= 7);
         self.reg.set_flags(Flags {
-            z: !ith_bit(x, bit),
+            z: !util::ith_bit(x, bit),
             n: false,
             h: true,
             c: self.reg.get_flag(Carry),
@@ -638,7 +356,11 @@ impl Cpu {
                 a = a.wrapping_add(0x06);
             }
         } else if self.reg.get_flag(Carry) {
-            a = a.wrapping_add(if self.reg.get_flag(HalfCarry) { 0x9a } else { 0xa0 });
+            a = a.wrapping_add(if self.reg.get_flag(HalfCarry) {
+                0x9a
+            } else {
+                0xa0
+            });
         } else if self.reg.get_flag(HalfCarry) {
             a = a.wrapping_add(0xfa);
         }
@@ -716,12 +438,14 @@ impl Cpu {
             }
             // ld   A,(FF00+n)  F0 nn     12 ---- read from io-port n (memory FF00+n)
             LoadAwithFF00plusN { n } => {
-                self.reg.write(Register::A, self.mem.read(u16::from(n) + 0xFF00));
+                self.reg
+                    .write(Register::A, self.mem.read(u16::from(n) + 0xFF00));
                 12
             }
             // ld   (FF00+n),A  E0 nn     12 ---- write to io-port n (memory FF00+n)
             LoadMemoryFF00plusNwithA { nn } => {
-                self.mem.write(u16::from(nn) + 0xFF00, self.reg.read(Register::A));
+                self.mem
+                    .write(u16::from(nn) + 0xFF00, self.reg.read(Register::A));
                 12
             }
             // ld   A,(FF00+C)  F2         8 ---- read from io-port C (memory FF00+C)
@@ -971,7 +695,8 @@ impl Cpu {
             //  cpl              2F         4 -11- A = A xor FF
             CPL => {
                 // Complement all bits
-                self.reg.write(Register::A, self.reg.read(Register::A) ^ 0xFF);
+                self.reg
+                    .write(Register::A, self.reg.read(Register::A) ^ 0xFF);
                 self.reg.set_flag(Subtract, true);
                 self.reg.set_flag(HalfCarry, true);
                 4
@@ -980,7 +705,8 @@ impl Cpu {
             //GMB 16bit-Arithmetic/logical Commands
             //add  HL,rr     x9           8 -0hc HL = HL+rr     ;rr may be BC,DE,HL,SP
             AddRegisterHL16bit { r } => {
-                let val = self.alu_add16(self.reg.read_word(Register16bit::HL), self.reg.read_word(r));
+                let val =
+                    self.alu_add16(self.reg.read_word(Register16bit::HL), self.reg.read_word(r));
                 self.reg.write_word(Register16bit::HL, val);
                 8
             }
@@ -991,7 +717,8 @@ impl Cpu {
             }
             //inc  rr        x3           8 ---- rr = rr+1      ;rr may be BC,DE,HL,SP
             IncrementRegister16bit { r } => {
-                self.reg.write_word(r, self.reg.read_word(r).wrapping_add(1));
+                self.reg
+                    .write_word(r, self.reg.read_word(r).wrapping_add(1));
                 8
             }
             IncrementSP {} => {
@@ -1000,7 +727,8 @@ impl Cpu {
             }
             //dec  rr        xB           8 ---- rr = rr-1      ;rr may be BC,DE,HL,SP
             DecrementRegister16bit { r } => {
-                self.reg.write_word(r, self.reg.read_word(r).wrapping_sub(1));
+                self.reg
+                    .write_word(r, self.reg.read_word(r).wrapping_sub(1));
                 8
             }
             DecrementSP {} => {
@@ -1143,27 +871,29 @@ impl Cpu {
             //set  n,r       CB xx        8 ---- set bit n
             SetBitRegister { bit, r } => {
                 self.reg.write(r, Cpu::alu_set_bit(self.reg.read(r), bit));
-                assert!(ith_bit(self.reg.read(r), bit));
+                assert!(util::ith_bit(self.reg.read(r), bit));
                 8
             }
             //set  n,(HL)    CB xx       16 ---- set bit n
             SetBitMemoryHL { bit } => {
                 let address = self.reg.read_word(Register16bit::HL);
-                self.mem.write(address, Cpu::alu_set_bit(self.mem.read(address), bit));
-                assert!(ith_bit(self.mem.read(address), bit));
+                self.mem
+                    .write(address, Cpu::alu_set_bit(self.mem.read(address), bit));
+                assert!(util::ith_bit(self.mem.read(address), bit));
                 16
             }
             //res  n,r       CB xx        8 ---- reset bit n
             ResetBitRegister { bit, r } => {
                 self.reg.write(r, Cpu::alu_reset_bit(self.reg.read(r), bit));
-                assert!(!ith_bit(self.reg.read(r), bit));
+                assert!(!util::ith_bit(self.reg.read(r), bit));
                 8
             }
             //res  n,(HL)    CB xx       16 ---- reset bit n
             ResetBitMemoryHL { bit } => {
                 let address = self.reg.read_word(Register16bit::HL);
-                self.mem.write(address, Cpu::alu_reset_bit(self.mem.read(address), bit));
-                assert!(!ith_bit(self.mem.read(address), bit));
+                self.mem
+                    .write(address, Cpu::alu_reset_bit(self.mem.read(address), bit));
+                assert!(!util::ith_bit(self.mem.read(address), bit));
                 16
             }
             //GMB CPU-Control Commands
@@ -1305,7 +1035,7 @@ impl Cpu {
     }
 
     // (instruction, pc increments)
-    fn fetch_instruction(&self) -> (Instruction, u16) {
+    fn fetch(&self) -> (Instruction, u16) {
         let immediate_u8 = || self.mem.read(self.pc + 1);
         let immediate_i8 = || self.mem.read(self.pc + 1) as i8;
         let immediate_u16 = || self.mem.read_word(self.pc + 1);
@@ -1892,8 +1622,19 @@ impl Cpu {
                         },
                         2,
                     ),
-                    0x2E => (ShiftRightHL { is_arithmetic: true }, 2),
-                    0x2F => (ShiftRightRegister { r: Register::A, is_arithmetic: true }, 2),
+                    0x2E => (
+                        ShiftRightHL {
+                            is_arithmetic: true,
+                        },
+                        2,
+                    ),
+                    0x2F => (
+                        ShiftRightRegister {
+                            r: Register::A,
+                            is_arithmetic: true,
+                        },
+                        2,
+                    ),
                     //swap r         CB 3x        8 z000 exchange low/hi-nibble
                     //swap (HL)      CB 36       16 z000 exchange low/hi-nibble
                     0x30..=0x35 => (
@@ -1913,8 +1654,19 @@ impl Cpu {
                         },
                         2,
                     ),
-                    0x3E => (ShiftRightHL { is_arithmetic: false }, 2),
-                    0x3F => (ShiftRightRegister { r: Register::A, is_arithmetic: false }, 2),
+                    0x3E => (
+                        ShiftRightHL {
+                            is_arithmetic: false,
+                        },
+                        2,
+                    ),
+                    0x3F => (
+                        ShiftRightRegister {
+                            r: Register::A,
+                            is_arithmetic: false,
+                        },
+                        2,
+                    ),
 
                     //GMB Singlebit Operation Commands
                     //bit  n,r       CB xx        8 z01- test bit n
@@ -2469,14 +2221,10 @@ impl Cpu {
     }
 }
 
-use std::fmt;
-
 impl fmt::Debug for Cpu {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (instr, incr) = self.fetch_instruction();
-        let v = self.mem.raw_memory
-            [self.pc as usize..self.pc as usize + incr as usize]
-            .to_vec();
+        let (instr, incr) = self.fetch();
+        let v: Vec<u8> = (self.pc..self.pc+incr).map(|addr| self.mem.read(addr)).collect();
         let tabs = match v.len() {
             0 => "",
             1 => "\t\t\t",
@@ -2492,16 +2240,15 @@ impl fmt::Debug for Cpu {
         };
 
         write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
-               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(LY), instr)
+               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(0xFF44), instr)
     }
 }
 
 #[cfg(test)]
-mod test
-{
+mod test {
     use crate::cpu::Cpu;
-    use crate::registers::{Register, Flags};
     use crate::registers::ConditionalFlag::*;
+    use crate::registers::{Flags, Register};
 
     fn make_test_cpu() -> Cpu {
         let cartridge = [0u8; 0x8000];
@@ -2509,119 +2256,287 @@ mod test
     }
 
     #[test]
-    fn alu_add()
-    {
+    fn alu_add() {
         let mut cpu = make_test_cpu();
 
         cpu.reg.write(Register::A, 0x3A);
         cpu.alu_add(0xC6, false);
         assert_eq!(0x3Au8.wrapping_add(0xC6), cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: true, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: true,
+                c: true,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x3A);
         cpu.alu_add(0xC6, true);
         assert_eq!(1, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: true, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: true,
+                c: true,
+            }
+        );
 
         cpu.reg.write(Register::A, 0);
         cpu.alu_add(1, false);
         assert_eq!(1, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x0f);
         cpu.alu_add(1, false);
         assert_eq!(0x10, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: true, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: true,
+                c: false,
+            }
+        );
     }
 
     #[test]
-    fn alu_sub()
-    {
+    fn alu_sub() {
         let mut cpu = make_test_cpu();
 
         cpu.reg.write(Register::A, 0x3A);
         cpu.alu_sub(0x3a, false);
         assert_eq!(0, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: true, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: true,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x00);
         cpu.alu_sub(0x3a, false);
         assert_eq!(0x00u8.wrapping_sub(0x3a), cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: true, h: true, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: true,
+                h: true,
+                c: true,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x3a);
         cpu.alu_sub(0x30, true);
-        assert_eq!(0x3au8.wrapping_sub(0x30).wrapping_sub(1), cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: true, h: false, c: false });
+        assert_eq!(
+            0x3au8.wrapping_sub(0x30).wrapping_sub(1),
+            cpu.reg.read(Register::A)
+        );
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: true,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x20);
         cpu.alu_sub(0x11, false);
         assert_eq!(0x20u8.wrapping_sub(0x11), cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: true, h: true, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: true,
+                h: true,
+                c: false,
+            }
+        );
     }
 
     #[test]
-    fn alu_logical()
-    {
+    fn alu_logical() {
         let mut cpu = make_test_cpu();
 
         // AND
         cpu.reg.write(Register::A, 0x3A);
         cpu.alu_and(0x0F);
         assert_eq!(0x3A & 0x0F, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: true, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: true,
+                c: false,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x3A);
         cpu.alu_and(0x00);
         assert_eq!(0x00, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: true, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: true,
+                c: false,
+            }
+        );
 
         // OR
         cpu.reg.write(Register::A, 0x3A);
         cpu.alu_or(0x0F);
         assert_eq!(0x3A | 0x0F, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x00);
         cpu.alu_or(0x00);
         assert_eq!(0x00, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         // XOR
         cpu.reg.write(Register::A, 0x3A);
         cpu.alu_xor(0x1B);
         assert_eq!(0x3A ^ 0x1B, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.reg.write(Register::A, 0x4C);
         cpu.alu_xor(0x4C);
         assert_eq!(0x00, cpu.reg.read(Register::A));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         // INC
         assert_eq!(0x4D, cpu.alu_inc(0x4C));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         assert_eq!(0x00, cpu.alu_inc(0xFF));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: true, c: cpu.reg.get_flag(Carry) });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: true,
+                c: cpu.reg.get_flag(Carry),
+            }
+        );
 
         // DEC
         assert_eq!(0x00, cpu.alu_dec(0x01));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: true, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: true,
+                h: false,
+                c: false,
+            }
+        );
 
         assert_eq!(0xFF, cpu.alu_dec(0x00));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: true, h: true, c: cpu.reg.get_flag(Carry) });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: true,
+                h: true,
+                c: cpu.reg.get_flag(Carry),
+            }
+        );
 
         // Swap nibbles
         assert_eq!(0xF1, cpu.alu_swap_nibbles(0x1F));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         // Test bit
         cpu.alu_test_bit(0x02, 1);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: true, c: cpu.reg.get_flag(Carry) });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: true,
+                c: cpu.reg.get_flag(Carry),
+            }
+        );
 
         cpu.alu_test_bit(0x02, 2);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: true, c: cpu.reg.get_flag(Carry) });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: true,
+                c: cpu.reg.get_flag(Carry),
+            }
+        );
 
         // Set bit
         assert_eq!(0x02, Cpu::alu_set_bit(0x00, 1));
@@ -2631,72 +2546,189 @@ mod test
         // Compare
         cpu.reg.write(Register::A, 0x10);
         cpu.alu_cmp(0x10);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: true, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: true,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.alu_cmp(0x05);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: true, h: true, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: true,
+                h: true,
+                c: false,
+            }
+        );
     }
 
     #[test]
-    fn alu_rotate()
-    {
+    fn alu_rotate() {
         let mut cpu = make_test_cpu();
 
         // Left
         assert_eq!(0b01010101, cpu.alu_rotate_left(0b10101010, false));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: true,
+            }
+        );
 
         assert_eq!(0b01010101, cpu.alu_rotate_left(0b10101010, true));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: true,
+            }
+        );
 
         assert_eq!(0x00, cpu.alu_rotate_left(0x00, false));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         // Right
         assert_eq!(0b01010101, cpu.alu_rotate_right(0b10101010, false));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.reg.set_flag(Carry, true);
         assert_eq!(0b11010101, cpu.alu_rotate_right(0b10101010, true));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         assert_eq!(0x00, cpu.alu_rotate_right(0x00, false));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         assert_eq!(0x00, cpu.alu_rotate_right(0x00, true));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
     }
 
     #[test]
-    fn alu_shift()
-    {
+    fn alu_shift() {
         let mut cpu = make_test_cpu();
 
         // Left
         assert_eq!(0b01010100, cpu.alu_shift_left(0b10101010));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: true,
+            }
+        );
 
         assert_eq!(0x00, cpu.alu_shift_left(0x80));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: true,
+            }
+        );
 
         // Right, logical
         assert_eq!(0b01010101, cpu.alu_shift_right(0b10101010, false));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         assert_eq!(0x00, cpu.alu_shift_right(0x01, false));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: true,
+            }
+        );
 
         // Right, arithmetic
         assert_eq!(0b11010101, cpu.alu_shift_right(0b10101010, true));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         assert_eq!(0x00, cpu.alu_shift_right(0x01, true));
-        assert_eq!(cpu.reg.get_flags(), Flags { z: true, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: true,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
     }
 
     #[test]
-    fn alu_daa()
-    {
+    fn alu_daa() {
         let mut cpu = make_test_cpu();
 
         // Add
@@ -2704,25 +2736,56 @@ mod test
         cpu.alu_add(0x38, false);
 
         assert_eq!(cpu.reg.read(Register::A), 0x7D);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         cpu.alu_daa();
         assert_eq!(cpu.reg.read(Register::A), 0x83);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         // Sub
         cpu.alu_sub(0x38, false);
         assert_eq!(cpu.reg.read(Register::A), 0x4B);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: true, h: true, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: true,
+                h: true,
+                c: false,
+            }
+        );
 
         cpu.alu_daa();
         assert_eq!(cpu.reg.read(Register::A), 0x45);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: false, n: true, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: false,
+                n: true,
+                h: false,
+                c: false,
+            }
+        );
     }
 
     #[test]
-    fn stack()
-    {
+    fn stack() {
         let mut cpu = make_test_cpu();
 
         cpu.sp = 0xFFFE;
@@ -2741,35 +2804,40 @@ mod test
     }
 
     #[test]
-    fn alu_16()
-    {
+    fn alu_16() {
         let mut cpu = make_test_cpu();
 
         assert_eq!(cpu.alu_add16(10, 20), 30);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: cpu.reg.get_flag(Zero), n: false, h: false, c: false });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: cpu.reg.get_flag(Zero),
+                n: false,
+                h: false,
+                c: false,
+            }
+        );
 
         assert_eq!(cpu.alu_add16(0xFFFF, 1), 0);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: cpu.reg.get_flag(Zero), n: false, h: true, c: true });
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: cpu.reg.get_flag(Zero),
+                n: false,
+                h: true,
+                c: true,
+            }
+        );
 
         assert_eq!(cpu.alu_add16(0x07FF, 1), 0x800);
-        assert_eq!(cpu.reg.get_flags(), Flags { z: cpu.reg.get_flag(Zero), n: false, h: true, c: false });
-    }
-
-    #[test]
-    fn jumps()
-    {
-        unimplemented!();
-    }
-
-    #[test]
-    fn memory()
-    {
-        unimplemented!();
-    }
-
-    #[test]
-    fn compare()
-    {
-        unimplemented!();
+        assert_eq!(
+            cpu.reg.get_flags(),
+            Flags {
+                z: cpu.reg.get_flag(Zero),
+                n: false,
+                h: true,
+                c: false,
+            }
+        );
     }
 }

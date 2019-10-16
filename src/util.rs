@@ -10,10 +10,6 @@ pub(crate) mod little_endian {
     pub fn u8(val: u16) -> (u8, u8) {
         (lsb(val), msb(val))
     }
-
-    pub fn u16(lsb: u8, msb: u8) -> u16 {
-        (u16::from(msb) << 8) | u16::from(lsb)
-    }
 }
 
 pub fn ith_bit(n: u8, i: u8) -> bool {
@@ -30,8 +26,7 @@ pub fn clear_bit(n: u8, i: u8) -> u8 {
 }
 
 #[cfg(test)]
-mod test
-{
+mod test {
     #[test]
     fn clear_bit() {
         assert_eq!(super::clear_bit(0b1111_1111, 5), 0b1101_1111);
