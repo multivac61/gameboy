@@ -330,8 +330,8 @@ impl Ppu {
         impl Sprite {
             pub fn new(bytes: &[u8]) -> Self {
                 Sprite {
-                    x: bytes[1].wrapping_sub(8),
-                    y: bytes[0].wrapping_sub(16),
+                    x: bytes[1],
+                    y: bytes[0],
                     pattern: bytes[2],
                     priority: util::ith_bit(bytes[3], 7),
                     x_flip: util::ith_bit(bytes[3], 5),
@@ -350,13 +350,13 @@ impl Ppu {
             let sprite = Sprite::new(&self.oam[i..i + 4]);
 
             let does_sprite_intercept_line =
-                scan_line >= sprite.y && (scan_line < (sprite.y + y_size));
+                scan_line + 16 >= sprite.y && (scan_line + 16 < (sprite.y + y_size));
             if does_sprite_intercept_line {
                 let line = 2 * if sprite.y_flip {
                     // TODO: WHY?1
-                    -(1 + scan_line as i16 - sprite.y as i16 - y_size as i16)
+                    -(1 + scan_line as i16 - (sprite.y as i16 - 16) - y_size as i16)
                 } else {
-                    scan_line as i16 - sprite.y as i16
+                    scan_line as i16 - (sprite.y as i16 - 16)
                 };
 
                 let address = sprite.pattern as u16 * 16 + line as u16;
@@ -364,22 +364,27 @@ impl Ppu {
                 let data2 = self.ram[address as usize + 1];
 
                 for pixel in 0..=7 {
-                    let pixel_bit = if sprite.x_flip { pixel } else { 7 - pixel };
-                    let color_num = ((util::ith_bit(data2, pixel_bit) as u8) << 1)
-                        | util::ith_bit(data1, pixel_bit) as u8;
-                    let palette = if sprite.palette == OBP0 { self.obp0 } else { self.obp1 };
-                    let c = self.get_color(color_num, palette) as u32;
+                    let x = sprite.x + pixel - 8;
 
-                    // TODO: Check sprite.priority
-                    // Bit7 Priority
-                    // If this bit is set to 0, sprite is displayed on top of background & window.
-                    // If this bit is set to 1, then sprite will be hidden behind colors 1, 2, and 3
-                    // of the background & window. (Sprite only prevails over color 0 of BG & win.)
+                    if (0..160u8).contains(&x) {
+                        let pixel_bit = if sprite.x_flip { pixel } else { 7 - pixel };
+                        let color_num = ((util::ith_bit(data2, pixel_bit) as u8) << 1)
+                            | util::ith_bit(data1, pixel_bit) as u8;
 
-                    if color_num > 0 {
-                        let pos = scan_line as usize * 160 + sprite.x as usize + pixel as usize;
-                        if pos < self.frame_buffer.len() {
-                            self.frame_buffer [pos] = (0xff << 24) | (c << 16) | (c << 8) | c;
+                        let palette = if sprite.palette == OBP0 { self.obp0 } else { self.obp1 };
+                        let c = self.get_color(color_num, palette) as u32;
+
+                        // TODO: Check sprite.priority
+                        // Bit7 Priority
+                        // If this bit is set to 0, sprite is displayed on top of background & window.
+                        // If this bit is set to 1, then sprite will be hidden behind colors 1, 2, and 3
+                        // of the background & window. (Sprite only prevails over color 0 of BG & win.)
+
+                        if color_num > 0 {
+                            let pos = scan_line as usize * 160 + x as usize;
+                            if pos < self.frame_buffer.len() {
+                                self.frame_buffer [pos] = (0xff << 24) | (c << 16) | (c << 8) | c;
+                            }
                         }
                     }
                 }
