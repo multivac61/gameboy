@@ -370,8 +370,13 @@ impl Ppu {
                     let palette = if sprite.palette == OBP0 { self.obp0 } else { self.obp1 };
                     let c = self.get_color(color_num, palette) as u32;
 
-                    // white is transparent
-                    if c != (WHITE as u32) {
+                    // TODO: Check sprite.priority
+                    // Bit7 Priority
+                    // If this bit is set to 0, sprite is displayed on top of background & window.
+                    // If this bit is set to 1, then sprite will be hidden behind colors 1, 2, and 3
+                    // of the background & window. (Sprite only prevails over color 0 of BG & win.)
+
+                    if color_num > 0 {
                         let pos = scan_line as usize * 160 + sprite.x as usize + pixel as usize;
                         if pos < self.frame_buffer.len() {
                             self.frame_buffer [pos] = (0xff << 24) | (c << 16) | (c << 8) | c;
