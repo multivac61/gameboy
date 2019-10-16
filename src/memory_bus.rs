@@ -101,7 +101,6 @@ impl MemoryBus {
 
             ppu::REG_START..=ppu::LYC => self.ppu.write(address, data),
             DMA => {
-                // TODO
                 let source = u16::from_le_bytes([0, data]);
                 let chunk: Vec<u8> = (source..source+0xA0).map(|addr| self.read(addr)).collect();
 
@@ -115,7 +114,7 @@ impl MemoryBus {
 
             BOOT_ROM_ENABLE_REGISTER => self.is_boot_rom_enabled = data == 0,
 
-            _ => println!("Tried to write address {:#x}: {:#x}", address, data),
+            _ => println!("Tried to write to unavailable address {:#x}: {:#x}", address, data),
         };
     }
 
@@ -129,10 +128,7 @@ impl MemoryBus {
         }
 
         match address {
-            ROM_BANK_START..=ROM_BANK_END =>
-            self.
-            cartridge.
-            read_rom(address),
+            ROM_BANK_START..=ROM_BANK_END => self.cartridge.read_rom(address),
 
             ppu::RAM_START..=ppu::RAM_END => self.ppu.read(address),
 
@@ -158,7 +154,10 @@ impl MemoryBus {
 
             INTERRUPT_ENABLE => self.interrupt_enable,
 
-            _ => unreachable!(),
+            _ => {
+                println!("Tried to read from unavailable address {:#x}", address);
+                0x00
+            },
         }
     }
 

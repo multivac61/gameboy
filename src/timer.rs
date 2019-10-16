@@ -97,7 +97,11 @@ impl Timer {
         for _ in 0..cycles {
             self.one_cycle();
         }
-        self.irq
+
+        let irq = self.irq;
+        self.irq = 0;
+
+        irq << 2
     }
 
     fn x_one_cycle(&mut self) {

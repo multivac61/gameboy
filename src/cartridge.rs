@@ -35,14 +35,16 @@ impl Cartridge {
             _ => unreachable!(),
         };
 
-        let ram_size = match cartridge[0x149] {
-            0 => 0,
-            1 => 0x800,
-            2 => 0x2000,
-            3 => 0x8000,
-            4 => 0x20000,
-            _ => unreachable!(),
-        };
+//        let ram_size = match cartridge[0x149] {
+//            0 => 0,
+//            1 => 0x800,
+//            2 => 0x2000,
+//            3 => 0x8000,
+//            4 => 0x20000,
+//            _ => unreachable!(),
+//        };
+
+        let ram_size = 0x8000;
 
         Cartridge {
             controller,
@@ -50,7 +52,7 @@ impl Cartridge {
             cur_rom_bank: 1,
             ram: vec![0; ram_size],
             cur_ram_bank: 0,
-            should_enable_ram: false,
+            should_enable_ram: true,
         }
     }
 
@@ -66,7 +68,7 @@ impl Cartridge {
     }
 
     pub fn read_ram(&self, address: MemoryAddress) -> u8 {
-        let address = address - ROM_BANK_N_START + RAM_BANK_SIZE * self.cur_ram_bank as u16;
+        let address = address - RAM_START + RAM_BANK_SIZE * self.cur_ram_bank as u16;
         self.ram[address as usize]
     }
 
@@ -75,7 +77,7 @@ impl Cartridge {
             0x0000..=0x1FFF => {
                 self.should_enable_ram = match self.controller {
                     Controller::Local => false,
-                    Controller::MBC1 { is_4mbit: false } => data & 0x0F == 0x0A,
+                    Controller::MBC1 { is_4mbit: true } => data & 0x0F == 0x0A,
                     _ => unreachable!(),
                 };
             }
@@ -141,8 +143,8 @@ impl Cartridge {
         match address {
             0xA000..=0xBFFF => {
                 if self.should_enable_ram {
-                    let address = address as usize - 0xA000 + 0x2000 * self.cur_ram_bank as usize;
-                    self.ram[address] = data;
+                    let address = address - RAM_START + RAM_BANK_SIZE * self.cur_ram_bank as u16;
+                    self.ram[address as usize] = data;
                 }
             }
             _ => unreachable!()

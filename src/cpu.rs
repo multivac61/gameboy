@@ -119,7 +119,6 @@ impl Cpu {
             let cycles = program_cycles + interrupt_cycles;
 
             self.mem.interrupt_flag |= self.mem.timer.update(cycles);
-
             self.mem.interrupt_flag |= self.mem.ppu.update(cycles);
 
             if self.mem.interrupt_flag > 0 {
@@ -2224,26 +2223,24 @@ impl Cpu {
 
 impl fmt::Debug for Cpu {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//        let (instr, incr) = self.fetch();
-//        let v = self.mem.raw_memory[self.pc as usize..self.pc as usize + incr as usize].to_vec();
-//        let tabs = match v.len() {
-//            0 => "",
-//            1 => "\t\t\t",
-//            2 => "\t\t",
-//            3 => "\t",
-//            _ => unreachable!(),
-//        };
-//
-//        let stack_data: u16 = if self.sp >= 0xffff {
-//            0
-//        } else {
-//            self.mem.read_word(self.sp)
-//        };
-//
-//        write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
-//               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(0xFF44), instr)
+        let (instr, incr) = self.fetch();
+        let v: Vec<u8> = (self.pc..self.pc+incr).map(|addr| self.mem.read(addr)).collect();
+        let tabs = match v.len() {
+            0 => "",
+            1 => "\t\t\t",
+            2 => "\t\t",
+            3 => "\t",
+            _ => unreachable!(),
+        };
 
-        write!(f, "PC: {:04x}", self.pc)
+        let stack_data: u16 = if self.sp >= 0xffff {
+            0
+        } else {
+            self.mem.read_word(self.sp)
+        };
+
+        write!(f, "PC: {:4x?}, {:2x?}, SP: {:4x?} ({:4x?}), bytes: {:2x?},{} {:2x?}  \t LY: {:2x} \t {:x?}",
+               self.pc, self.mem.read(INTERRUPT_REQUEST_REGISTER), self.sp, stack_data, v, tabs, self.reg, self.mem.read(0xFF44), instr)
     }
 }
 
