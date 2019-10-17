@@ -29,6 +29,7 @@ These are the cartridge ROMs we've tested
 * [PacMan](https://wowroms.com/en/roms/nintendo-gameboy/pac-man-usa/9827.html)
 * [Super Mario Land](https://wowroms.com/en/roms/nintendo-gameboy/super-mario-land-world/10202.html)
 * [The Legend of Zelda - Link's Awakening](https://wowroms.com/en/roms/nintendo-gameboy/legend-of-zelda-the-links-awakening-germany/9554.html)
+* [Tennis](https://wowroms.com/en/roms/nintendo-gameboy/tennis-world/10265.html)
 
 ### References:
 * [Game Boy CPU Manual](http://marc.rawer.de/Gameboy/Docs/GBCPUman.pdf)
